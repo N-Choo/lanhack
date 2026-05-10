@@ -2,6 +2,23 @@
 
 A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block devices, spy on traffic, inject latency, and block domains — all from a mouse-clickable interface.
 
+## Screenshots
+
+<p align="center">
+  <img src="img/monitor.png" alt="Live Monitor" width="700">
+  <br><em>Live website monitor — see every domain targets visit in real time</em>
+</p>
+
+<p align="center">
+  <img src="img/devices.png" alt="Device List" width="700">
+  <br><em>Device scan with block/spy controls</em>
+</p>
+
+<p align="center">
+  <img src="img/attacks.png" alt="Attacks Tab" width="700">
+  <br><em>Quick attacks: Discord/Steam/Lag and block by domain</em>
+</p>
+
 ## Features
 
 - **LAN Scan** — discover all devices on your network (IP, MAC, vendor, hostname)
