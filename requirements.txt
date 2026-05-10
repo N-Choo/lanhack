@@ -1,4 +1,5 @@
 scapy>=2.5.0
 textual>=1.0.0
 mitmproxy>=10.0.0
+pytest>=8.0.0
 
