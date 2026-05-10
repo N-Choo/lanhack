@@ -5,19 +5,22 @@ A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block de
 ## Screenshots
 
 <p align="center">
-  <img src="img/monitor.png" alt="Live Monitor" width="700">
-  <br><em>Live website monitor — see every domain targets visit in real time</em>
-</p>
-
-<p align="center">
-  <img src="img/devices.png" alt="Device List" width="700">
+  <img src="img/device_page.png" alt="Device List" width="700">
   <br><em>Device scan with block/spy controls</em>
 </p>
 
-<p align="center">
-  <img src="img/attacks.png" alt="Attacks Tab" width="700">
-  <br><em>Quick attacks: Discord/Steam/Lag and block by domain</em>
-</p>
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="img/attacks_page.png" alt="Attacks Tab" style="max-width: 100%; height: auto;">
+      <br><em>Quick attacks: Discord/Steam/Lag and block by domain</em>
+    </td>
+    <td align="center" width="50%">
+      <img src="img/monitor_page.png" alt="Live Monitor" style="max-width: 100%; height: auto;">
+      <br><em>Live website monitor — see every domain targets visit in real time</em>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
