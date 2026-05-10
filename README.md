@@ -2,6 +2,11 @@
 
 A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block devices, spy on traffic, inject latency, harvest credentials, and block domains — all from a mouse-clickable interface.
 
+<p align="center">
+  <img src="img/lanhack_demo.gif" alt="LANHACK Demo" width="700">
+  <br><em>Scan, spy, and monitor in real time — all from a terminal TUI</em>
+</p>
+
 ## Features
 
 | Category | Feature | Description |
