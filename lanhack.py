@@ -264,6 +264,7 @@ def detect_network():
         netmask = f"{octets[0]}.{octets[1]}.{octets[2]}.0/24"
     else:
         netmask = ""
+    return iface, my_ip, gateway_ip, netmask
 
 def arp_scan(subnet=None):
     ans, _ = scapy.arping(subnet or netmask, timeout=3, verbose=False)
@@ -352,8 +353,11 @@ class NetcutApp(App):
     Button.warning { background: #e0af68; color: #1a1b26; }
     Input.subnet { width: 28; }
     Input.target { width: 28; }
-    Input.iface { width: 28; }
-    #iface-row { height: 3; }
+    Input.iface { width: 18; }
+    #mid-row { height: 3; margin-bottom: 1; }
+    #top-row { height: 3; margin-bottom: 1; }
+    #dev-table { margin-top: 1; }
+    Button { min-width: 8; }
     #dev-toolbar { height: 3; }
     #action-bar { height: 3; }
     #toolbar { background: #1f2335; padding: 1 1; height: 5; }
@@ -433,41 +437,29 @@ class NetcutApp(App):
     def build_device_tab(self):
         pane = self.query_one("#devices")
         pane.remove_children()
-        if_row = Horizontal(
-            Input(placeholder=f"Interface ({iface})", id="iface-input", classes="iface"),
+        top = Horizontal(
+            Input(placeholder=f"Iface ({iface})", id="iface-input", classes="iface"),
             Button("Set", id="set-iface-btn", variant="default"),
-            id="iface-row"
-        )
-        pane.mount(if_row)
-        tb = Horizontal(
             Input(placeholder=f"Subnet ({netmask or 'e.g. 192.168.68.0/24'})", id="subnet-input", classes="subnet"),
-            Button("Scan LAN", id="scan-btn", variant="primary"),
-            id="dev-toolbar"
+            Button("Scan", id="scan-btn", variant="primary"),
+            Input(placeholder="Target IP", id="target-ip-dev", classes="target"),
+            id="top-row"
         )
-        pane.mount(tb)
-        ab = Horizontal(
-            Input(placeholder="Target IP (e.g. 192.168.68.56)", id="target-ip-dev", classes="target"),
-            id="ip-row"
-        )
-        pane.mount(ab)
-        bb = Horizontal(
+        pane.mount(top)
+        mid = Horizontal(
             Button("Block", id="block-dev-btn", variant="error"),
             Button("Unblock", id="unblock-dev-btn", variant="warning"),
             Button("Spy", id="spy-dev-btn", variant="primary"),
             Button("All", id="spy-all-btn", variant="primary"),
             Button("Load", id="load-ip-btn", variant="default"),
             Button("WoL", id="wol-btn", variant="default"),
-            id="action-row"
-        )
-        pane.mount(bb)
-        cb = Horizontal(
             Button("Auto Scan OFF", id="auto-scan-btn", variant="default") if not auto_scan_active else Button("Auto Scan ON", id="auto-scan-btn", variant="warning"),
-            Button("Fingerprint", id="fp-btn", variant="default"),
+            Button("FP", id="fp-btn", variant="default"),
             Button("MAC", id="toggle-mac-btn", variant="default"),
             Button("Unblock All", id="unblock-all-btn", variant="warning"),
-            id="utils-row"
+            id="mid-row"
         )
-        pane.mount(cb)
+        pane.mount(mid)
         dt = DataTable(id="dev-table")
         if show_mac:
             dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Fingerprint", "Status")
