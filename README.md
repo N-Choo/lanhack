@@ -34,11 +34,16 @@ A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block de
 - **Active Spies List** — shows which IPs are currently being monitored
 - **MAC Toggle** — show/hide MAC addresses in the device table
 - **Configurable Interface** — set the network interface at runtime
+- **Auto-Scan** — automatically re-scans the LAN every 30 seconds, detects and notifies when new devices appear
+- **Traffic Graphs** — live bar charts for bandwidth per device and top visited domains
+- **Device Fingerprinting** — scans open ports and identifies device type (Windows, macOS, Linux, Samsung TV, IoT, cameras, etc.)
+- **HTTPS Interception (DEMO)** — decrypts HTTPS traffic via mitmproxy; full URLs including paths and query parameters
 - **Wake-on-LAN** — wake sleeping devices before spying or blocking
 - **Stealth Mode** — randomized ARP intervals (1.2–3.1s) to evade detection tools like `arpwatch`
 - **Global DNS Block** — built-in DNS sinkhole that intercepts all LAN DNS traffic via iptables redirect
 - **MAC-Based Blocking** — block by MAC address so it survives DHCP IP changes
 - **Interface Selection** — change network interface at runtime without restart
+- **Credential Harvester** — captures passwords and form data from HTTP pages via JS injection; HTTPS credentials via mitmproxy addon
 
 ## Requirements
 
@@ -64,6 +69,63 @@ Dependencies (`scapy`, `textual`) auto-install on first run.
 | **Devices** | Scan LAN, set interface, block/spy by IP, toggle MAC |
 | **Attacks** | Discord/Steam/Lag toggles, device actions, block by domain, global DNS block, stealth mode |
 | **Sites** | Captured domains, click to open in browser |
+
+### Credential Harvester
+
+Two modes, both toggled from the **Attacks** tab:
+
+**HTTP Harvester** (no CA needed):
+1. Toggle **Harvester** ON — redirects all port 80 traffic through a local Python proxy
+2. The proxy injects JavaScript into every HTML page that monitors password fields and form submissions
+3. Captured data appears next to the toggle (e.g. `Harvester: ACTIVE (5 captured)`)
+4. Click **View Captured** to see the last 10 entries
+5. Works on any HTTP site — old routers, IoT dashboards, internal network pages
+
+**HTTPS Credential Extraction** (requires HTTPS Interception):
+1. First toggle **HTTPS Intercept** ON (target must trust the CA once)
+2. mitmproxy loads an addon that scans ALL decrypted POST/PUT bodies
+3. Automatically logs any request containing: `password`, `login`, `token`, `secret`, `api_key`, `credit`
+4. Results saved to `/tmp/lanhack_creds.txt` — click **View Captured** to see them
+
+**Combined workflow for maximum coverage:**
+```
+1. Enable HTTPS Intercept → target trusts CA → all HTTPS decrypted
+2. Enable Harvester → all HTTP gets JS injected
+3. Both credential sources captured simultaneously
+4. Click View Captured to see everything
+```
+
+### HTTPS Interception (DEMO)
+
+Toggle in the **Attacks** tab. Auto-installs `mitmproxy`, generates a CA certificate, and redirects all HTTP/HTTPS traffic through it via iptables.
+
+**For full decryption:** the target device must download and trust the CA certificate at `~/.mitmproxy/mitmproxy-ca.pem` (or navigate to `mitm.it` while interception is active). After trust is installed, every HTTPS URL becomes visible — paths, query parameters, and POST data.
+
+**Limitations:** certificate-pinned apps and modern browsers with HSTS preload will still show warnings. This is a DEMO feature — functional but requires target cooperation for full HTTPS visibility.
+
+### Device Fingerprinting
+
+After scanning, click **Fingerprint** in the Devices tab. LANHACK sends SYN packets to 15 common ports on each device and matches the open port pattern against known device signatures:
+- **Windows**: ports 135, 139, 445
+- **Linux/SSH**: port 22
+- **macOS/iOS**: ports 3689, 62078
+- **Samsung TV**: ports 7000, 7676
+- **IP Camera**: port 554 (RTSP)
+- **IoT**: port 8883 (MQTT)
+
+Results appear in the "Fingerprint" column alongside each device.
+
+### Traffic Graphs
+
+In the **Monitor** tab, click **Graphs** to switch from the site log to live bar charts:
+- **Bandwidth per device** — top 5 devices by KB transferred (last 30 packets)
+- **Top domains** — most visited domains ranked by hit count
+
+Data updates every 2 seconds. Click **List View** to switch back.
+
+### Auto-Scan
+
+Click **Auto Scan** in the Devices tab — scans your subnet every 30 seconds and silently merges new devices into the existing list. Shows a notification when a previously unseen device joins the network. Click again to stop.
 
 ### Wake-on-LAN
 
