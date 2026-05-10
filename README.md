@@ -1,53 +1,35 @@
 # LANHACK
 
-A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block devices, spy on traffic, inject latency, and block domains — all from a mouse-clickable interface.
-
-## Screenshots
-
-<p align="center">
-  <img src="img/device_page.png" alt="Device List" width="700">
-  <br><em>Device scan with block/spy controls</em>
-</p>
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="img/attacks_page.png" alt="Attacks Tab" style="max-width: 100%; height: auto;">
-      <br><em>Quick attacks: Discord/Steam/Lag and block by domain</em>
-    </td>
-    <td align="center" width="50%">
-      <img src="img/monitor_page.png" alt="Live Monitor" style="max-width: 100%; height: auto;">
-      <br><em>Live website monitor — see every domain targets visit in real time</em>
-    </td>
-  </tr>
-</table>
+A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block devices, spy on traffic, inject latency, harvest credentials, and block domains — all from a mouse-clickable interface.
 
 ## Features
 
-- **LAN Scan** — discover all devices on your network (IP, MAC, vendor, hostname)
-- **Block/Unblock** — cut internet access for any device via ARP spoof
-- **Spy Mode** — ARP-spoof a target without blocking, see every site they visit
-- **Live Monitor** — real-time capture of DNS queries and TLS handshakes across all spied devices
-- **Quick Attacks** — one-click Discord/Steam blocking via iptables, latency injection via `tc`
-- **Block by Domain** — resolve any domain to IPs and block them (FORWARD + OUTPUT chains)
-- **Open Captured Sites** — click any captured domain to open in browser (with CDN→main site mapping)
-- **Active Spies List** — shows which IPs are currently being monitored
-- **MAC Toggle** — show/hide MAC addresses in the device table
-- **Configurable Interface** — set the network interface at runtime
-- **Auto-Scan** — automatically re-scans the LAN every 30 seconds, detects and notifies when new devices appear
-- **Traffic Graphs** — live bar charts for bandwidth per device and top visited domains
-- **Device Fingerprinting** — scans open ports and identifies device type (Windows, macOS, Linux, Samsung TV, IoT, cameras, etc.)
-- **HTTPS Interception (DEMO)** — decrypts HTTPS traffic via mitmproxy; full URLs including paths and query parameters
-- **Wake-on-LAN** — wake sleeping devices before spying or blocking
-- **Stealth Mode** — randomized ARP intervals (1.2–3.1s) to evade detection tools like `arpwatch`
-- **Global DNS Block** — built-in DNS sinkhole that intercepts all LAN DNS traffic via iptables redirect
-- **MAC-Based Blocking** — block by MAC address so it survives DHCP IP changes
-- **Interface Selection** — change network interface at runtime without restart
-- **Credential Harvester** — captures passwords and form data from HTTP pages via JS injection; HTTPS credentials via mitmproxy addon
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Recon** | LAN Scan | Discover all devices (IP, MAC, vendor, hostname) |
+| | Device Fingerprinting | Scan open ports to identify device type (Windows, Samsung TV, IoT, etc.) |
+| | Auto-Scan | Continuously scan every 30s, detect new devices automatically |
+| **Interception** | Spy Mode | ARP-spoof a target without blocking; see every site they visit |
+| | Live Monitor | Real-time DNS query and TLS SNI capture across all spied devices |
+| | Traffic Graphs | Bar charts for bandwidth per device and top domains |
+| | HTTPS Interception (DEMO) | Full HTTPS decryption via mitmproxy (target must trust CA) |
+| **Blocking** | Device Block | Cut internet for any device via ARP + iptables (MAC-based, survives DHCP) |
+| | Domain Block | Resolve domain to IPs and block FORWARD + OUTPUT chains |
+| | Global DNS Block | DNS sinkhole via iptables redirect — blocks every device on the LAN |
+| | Quick Blocks | One-click Discord and Steam blocking |
+| **Credential Harvest** | HTTP Harvester | Inject JS into HTTP pages to capture form submissions and passwords |
+| | HTTPS Credential Extraction | Auto-log POST/PUT bodies containing password/login/token fields |
+| **Disruption** | Lag Attack | Add 500ms latency + 5% packet loss to any device via `tc` |
+| | Stealth Mode | Randomize ARP intervals (1.2–3.1s) to evade detection |
+| **Utility** | Wake-on-LAN | Wake sleeping devices before spying |
+| | Export Captures | Save all captured domains and credentials to CSV + JSON |
+| | Open Captured Sites | Click any captured domain to open in browser (CDN→main site mapping) |
+| | MAC Toggle | Show/hide MAC addresses in the device table |
+| | Interface Config | Change network interface at runtime |
 
 ## Requirements
 
-- Linux (uses `/proc/net/route`, `iptables`, `tc`)
+- Linux (uses `/proc/net/route`, `iptables`, `tc`, `ip`)
 - Python 3.10+
 - Root access (`sudo`)
 
@@ -59,33 +41,82 @@ cd lanhack
 sudo python3 lanhack.py
 ```
 
-Dependencies (`scapy`, `textual`) auto-install on first run.
+Dependencies (`scapy`, `textual`, `mitmproxy`) auto-install on first run.
 
-## Usage
+## Tab Reference
 
 | Tab | What it does |
 |-----|-------------|
-| **Monitor** | Live website stream from spied devices |
-| **Devices** | Scan LAN, set interface, block/spy by IP, toggle MAC |
-| **Attacks** | Discord/Steam/Lag toggles, device actions, block by domain, global DNS block, stealth mode |
-| **Sites** | Captured domains, click to open in browser |
+| **Monitor** | Live website stream from spied devices; switch between list view and traffic graphs |
+| **Devices** | Scan LAN, set interface/fingerprint, enter target IP, block/spy/WoL, auto-scan, MAC toggle |
+| **Attacks** | Quick toggles (Discord/Steam/Lag), device actions (block/unblock/spy by IP), domain block, global DNS, stealth, HTTPS interception, credential harvester |
+| **Sites** | Captured domains list; click to open in browser; export to CSV+JSON |
+
+## Complete Workflow Guide
+
+### Basic Surveillance
+
+```
+1. Devices tab → Scan LAN
+2. Click a device row (loads its IP)
+3. Click Spy → traffic routes through your machine
+4. Monitor tab → watch every site they visit in real time
+5. Sites tab → browse or export captured domains
+```
+
+### Full Attack Chain (recon → spy → disrupt → harvest)
+
+```
+1. Devices → Scan LAN
+2. Devices → Fingerprint (identify what each device is)
+3. Devices → Auto Scan (keep detecting new devices)
+4. Devices → click target → Spy
+5. Monitor → watch live traffic (or switch to Graphs)
+6. Attacks → Lag Attack (add latency to frustrate target)
+7. Attacks → Block Domain → "discord.com" (block their distractions)
+8. Attacks → HTTPS Intercept (target installs CA once → full URL visibility)
+9. Attacks → Harvester (capture HTTP form submissions)
+10. Attacks → View Captured (see all credentials)
+11. Sites → Export (save everything to CSV+JSON)
+```
+
+### Stealthy Passive Recon (no packets sent)
+
+```
+1. Enable Global DNS Block → starts DNS sinkhole on port 53
+2. All LAN DNS traffic is intercepted without ARP spoofing
+3. Zero packets sent to target devices — completely invisible
+4. Monitor tab shows domains queried by every device
+```
+
+### Blocking Discord/Steam for Everyone
+
+```
+Method 1 — Quick (needs app running):
+  Attacks → Block Discord + Block Steam (adds iptables rules)
+  Also toggle Global DNS Block for DNS-level blocking
+
+Method 2 — Permanent:
+  Use the built-in Global DNS Block or set up Pi-hole on your network
+```
+
+## Feature Details
 
 ### Credential Harvester
 
 Two modes, both toggled from the **Attacks** tab:
 
-**HTTP Harvester** (no CA needed):
+**HTTP Harvester** (no CA needed, works immediately):
 1. Toggle **Harvester** ON — redirects all port 80 traffic through a local Python proxy
 2. The proxy injects JavaScript into every HTML page that monitors password fields and form submissions
-3. Captured data appears next to the toggle (e.g. `Harvester: ACTIVE (5 captured)`)
+3. Works on any HTTP site — old routers, IoT dashboards, internal network pages
 4. Click **View Captured** to see the last 10 entries
-5. Works on any HTTP site — old routers, IoT dashboards, internal network pages
 
 **HTTPS Credential Extraction** (requires HTTPS Interception):
-1. First toggle **HTTPS Intercept** ON (target must trust the CA once)
+1. Toggle **HTTPS Intercept** ON (target must trust the CA once)
 2. mitmproxy loads an addon that scans ALL decrypted POST/PUT bodies
 3. Automatically logs any request containing: `password`, `login`, `token`, `secret`, `api_key`, `credit`
-4. Results saved to `/tmp/lanhack_creds.txt` — click **View Captured** to see them
+4. Results saved to `/tmp/lanhack_creds.txt`
 
 **Combined workflow for maximum coverage:**
 ```
@@ -99,79 +130,84 @@ Two modes, both toggled from the **Attacks** tab:
 
 Toggle in the **Attacks** tab. Auto-installs `mitmproxy`, generates a CA certificate, and redirects all HTTP/HTTPS traffic through it via iptables.
 
-**For full decryption:** the target device must download and trust the CA certificate at `~/.mitmproxy/mitmproxy-ca.pem` (or navigate to `mitm.it` while interception is active). After trust is installed, every HTTPS URL becomes visible — paths, query parameters, and POST data.
+**To use:** the target device must download and trust the CA certificate at `~/.mitmproxy/mitmproxy-ca.pem` (or navigate to `mitm.it` while interception is active). After trust is installed, every HTTPS URL becomes visible — paths, query parameters, and POST data.
 
-**Limitations:** certificate-pinned apps and modern browsers with HSTS preload will still show warnings. This is a DEMO feature — functional but requires target cooperation for full HTTPS visibility.
+**Limitations:** certificate-pinned apps and modern browsers with HSTS preload still show warnings. Requires target cooperation for full HTTPS visibility.
 
 ### Device Fingerprinting
 
-After scanning, click **Fingerprint** in the Devices tab. LANHACK sends SYN packets to 15 common ports on each device and matches the open port pattern against known device signatures:
-- **Windows**: ports 135, 139, 445
-- **Linux/SSH**: port 22
-- **macOS/iOS**: ports 3689, 62078
-- **Samsung TV**: ports 7000, 7676
-- **IP Camera**: port 554 (RTSP)
-- **IoT**: port 8883 (MQTT)
+After scanning, click **Fingerprint** in the Devices tab. LANHACK sends SYN packets to 15 common ports and matches open port patterns:
 
-Results appear in the "Fingerprint" column alongside each device.
+| Ports | Likely Device |
+|-------|--------------|
+| 135, 139, 445 | Windows |
+| 22 | Linux/SSH |
+| 3689, 62078 | macOS/iOS |
+| 7000, 7676 | Samsung TV |
+| 554 (RTSP) | IP Camera |
+| 8883 (MQTT) | IoT Device |
+| 80, 443 | Web Server |
+
+Results appear in the "Fingerprint" column.
 
 ### Traffic Graphs
 
 In the **Monitor** tab, click **Graphs** to switch from the site log to live bar charts:
 - **Bandwidth per device** — top 5 devices by KB transferred (last 30 packets)
 - **Top domains** — most visited domains ranked by hit count
-
-Data updates every 2 seconds. Click **List View** to switch back.
+- Updates every 2 seconds. Click **List View** to switch back.
 
 ### Auto-Scan
 
-Click **Auto Scan** in the Devices tab — scans your subnet every 30 seconds and silently merges new devices into the existing list. Shows a notification when a previously unseen device joins the network. Click again to stop.
+Click **Auto Scan** in the Devices tab — scans your subnet every 30 seconds and silently merges new devices into the existing list. Shows a notification when a previously unseen device joins. Click again to stop.
 
 ### Wake-on-LAN
 
-Select a device row or type its IP, then click **WoL** in the Devices tab — sends a magic packet to wake a sleeping device before spying or blocking.
+Select a device row or type its IP, then click **WoL** — sends a magic packet to wake a sleeping device before spying or blocking.
 
 ### Stealth Mode
 
-Toggle in the Attacks tab. When active, ARP spoof packets are sent at randomized intervals (1.2–3.1s) instead of a fixed 1.5s pattern, making the spoofing blend in with normal network chatter and harder for detection tools to flag.
+Toggle in the Attacks tab. ARP spoof packets use randomized intervals (1.2–3.1s) instead of a fixed 1.5s pattern, blending in with normal network chatter to evade tools like `arpwatch`.
 
 ### Global DNS Block
 
-Toggle in the Attacks tab. Starts a Python DNS server on port 53 and redirects all LAN DNS traffic to it via iptables `PREROUTING`. Domains in the blocklist resolve to `127.0.0.1`; everything else is forwarded to Cloudflare (1.1.1.1). No ARP spoof needed — every device on the network is blocked at the DNS level.
+Toggle in the Attacks tab. Starts a Python DNS server on port 53 and redirects all LAN DNS traffic to it via `iptables -t nat -I PREROUTING`. Domains in the blocklist resolve to `127.0.0.1`; everything else forwards to Cloudflare (1.1.1.1). No ARP spoof needed — every device on the network is blocked at the DNS level.
 
-### Workflow
+### Export Captures
 
-1. Open **Devices** tab → set Interface if needed → click **Scan LAN**
-2. Click a device row to load its IP, or type one manually
-3. Click **Spy** → their traffic routes through your machine
-4. Switch to **Monitor** tab → see every website they visit in real time
-5. Use **Attacks** tab to block Discord, Steam, or add lag
+In the **Sites** tab, click **Export CSV+JSON** — saves all captured domains (timestamps, device IPs, site URLs) and harvested credentials to:
+- `lanhack_export_{timestamp}.csv` (opens in Excel/Sheets)
+- `lanhack_export_{timestamp}.json` (machine-readable)
 
 ### Block by Domain
 
 ```
 Type "discord.com" → click "Block Domain"
 → resolves to live IPs → blocks FORWARD + OUTPUT via iptables
+→ also blocks via Global DNS if that's active
 ```
 
 ## How It Works
 
-LANHACK uses **ARP spoofing** to redirect a target's traffic through your machine. The `scapy` sniffer captures DNS queries and TLS Server Name Indication (SNI) from the forwarded traffic, showing every domain the target visits — even for HTTPS sites.
+LANHACK uses **ARP spoofing** to redirect a target's traffic through your machine. The `scapy` sniffer captures DNS queries and TLS SNI from the forwarded traffic, showing every domain the target visits — even for HTTPS sites.
 
-For blocking, it inserts `iptables` rules at position 1 (before Docker chains) on both the FORWARD and OUTPUT chains.
+For blocking, it inserts `iptables` rules at position 1 (before Docker chains) on FORWARD and OUTPUT chains, using MAC addresses to survive DHCP IP changes.
 
-Latency attacks use `tc` (traffic control) to add jitter, packet loss, and bandwidth throttling.
+The **Global DNS Block** runs a slim Python DNS server on port 53 that checks each query against the blocklist, returning `127.0.0.1` for blocked domains and forwarding everything else to Cloudflare.
 
-The Global DNS Block runs a slim Python DNS server on port 53 and uses `iptables -t nat -I PREROUTING` to redirect all LAN DNS queries through it — no ARP spoof needed for domain-level blocking.
+**Credential harvesting** uses two methods:
+- HTTP: redirect port 80 to a Python proxy that injects JS into HTML pages
+- HTTPS: mitmproxy addon scans decrypted POST/PUT bodies for credential patterns
 
-Stealth mode randomizes ARP reply timing and avoids broadcasting to the gateway when unnecessary, reducing the detectable signature.
+**Stealth mode** randomizes ARP timing to reduce detectability. **Latency attacks** use `tc` (traffic control) to add jitter, loss, and throttling.
 
 ## Limitations
 
 - ARP spoofing is detectable on networks with DAI / port security
 - You must keep the app running to maintain blocks and spies
-- Only outgoing DNS queries are captured (not full HTTPS paths)
+- Only outgoing DNS queries captured (not full HTTPS paths without HTTPS Intercept)
 - HTTPS decryption requires installing a custom CA on the target device
+- Credential harvester only works on HTTP without HTTPS Intercept enabled
 
 ## License
 
