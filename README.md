@@ -44,7 +44,7 @@ A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block de
 ## Quick Start
 
 ```bash
-git clone https://github.com/yourusername/lanhack.git
+git clone https://github.com/N-Choo/lanhack.git
 cd lanhack
 sudo python3 lanhack.py
 ```
