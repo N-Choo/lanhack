@@ -206,6 +206,43 @@ The **Global DNS Block** runs a slim Python DNS server on port 53 that checks ea
 
 **Stealth mode** randomizes ARP timing to reduce detectability. **Latency attacks** use `tc` (traffic control) to add jitter, loss, and throttling.
 
+## Detectability & Ghost Mode
+
+### What is detectable
+
+| Action | Detectable? | How |
+|--------|-------------|-----|
+| Global DNS Block | ❌ **Invisible** | iptables PREROUTING — no packets sent to targets |
+| Stealth Mode | ❌ Lowers detectability | Randomizes ARP timing to blend with normal chatter |
+| Spy on device | ⚠️ **Detectable** | ARP spoof sends periodic packets; `arpwatch`, `snort`, or router logs may flag duplicate MAC for gateway IP |
+| Block device | ⚠️ **Detectable** | Same as spy, plus internet cutting out alerts the target |
+| ARP scan | ⚠️ **Detectable** | Burst of ARP requests to all IPs; visible to `arp-scan` or `wireshark` |
+| Device fingerprinting | ⚠️ **Detectable** | SYN packets to 15 ports on each device; firewalls log connection attempts |
+| HTTPS Intercept | ❌ Invisible on wire | But target must manually trust a CA certificate (raises suspicion) |
+| Credential Harvester | ❌ Invisible on wire | Only modifies HTTP responses, no extra packets |
+
+### How to run like a ghost (zero detectability)
+
+```
+1. Devices tab → skip scanning if you already know the subnet
+2. Attacks tab → Global DNS Block ON (captures all LAN DNS traffic)
+3. Attacks tab → Stealth ON (in case ARP is used later)
+4. Monitor tab → watch all domains in real time
+5. Sites tab → export captured data
+
+→ No ARP spoof, no SYN scan, no active probes
+→ Pure passive listening via iptables DNS redirect
+→ No device on the network will ever know LANHACK is running
+```
+
+### Detection risks explained
+
+**ARP spoofing** is the most detectable feature. Managed switches with **DAI (Dynamic ARP Inspection)** drop spoofed ARP packets entirely. Enterprise networks with **802.1X** or **port security** block rogue traffic. On home routers (TP-Link, Asus, Netgear) — effectively invisible; no one monitors ARP tables.
+
+**SYN scans** (device fingerprinting) are logged by any half-decent firewall. Use only when you don't care about stealth.
+
+**Global DNS Block** is completely passive — it listens on port 53 and intercepts DNS queries via iptables. The kernel handles the redirect; no device sees a packet from your machine. This is the only truly invisible feature.
+
 ## Limitations
 
 - ARP spoofing is detectable on networks with DAI / port security
