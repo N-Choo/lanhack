@@ -3,7 +3,7 @@ import threading, time, os, sys, socket, struct, re, subprocess, shutil
 from datetime import datetime
 from collections import defaultdict
 
-REQUIREMENTS = ["scapy>=2.5.0", "textual>=1.0.0"]
+REQUIREMENTS = ["scapy>=2.5.0", "textual>=1.0.0", "mitmproxy>=10.0.0"]
 def auto_install():
     missing = []
     try: import scapy.all
@@ -447,19 +447,27 @@ class NetcutApp(App):
         pane.mount(tb)
         ab = Horizontal(
             Input(placeholder="Target IP (e.g. 192.168.68.56)", id="target-ip-dev", classes="target"),
-            Button("All", id="spy-all-btn", variant="primary"),
-            Button("Load", id="load-ip-btn", variant="default"),
+            id="ip-row"
+        )
+        pane.mount(ab)
+        bb = Horizontal(
             Button("Block", id="block-dev-btn", variant="error"),
             Button("Unblock", id="unblock-dev-btn", variant="warning"),
             Button("Spy", id="spy-dev-btn", variant="primary"),
+            Button("All", id="spy-all-btn", variant="primary"),
+            Button("Load", id="load-ip-btn", variant="default"),
             Button("WoL", id="wol-btn", variant="default"),
+            id="action-row"
+        )
+        pane.mount(bb)
+        cb = Horizontal(
             Button("Auto Scan OFF", id="auto-scan-btn", variant="default") if not auto_scan_active else Button("Auto Scan ON", id="auto-scan-btn", variant="warning"),
             Button("Fingerprint", id="fp-btn", variant="default"),
-            Button("Unblock All", id="unblock-all-btn", variant="warning"),
             Button("MAC", id="toggle-mac-btn", variant="default"),
-            id="action-bar"
+            Button("Unblock All", id="unblock-all-btn", variant="warning"),
+            id="utils-row"
         )
-        pane.mount(ab)
+        pane.mount(cb)
         dt = DataTable(id="dev-table")
         if show_mac:
             dt.add_columns("#", "IP", "MAC", "Vendor", "Hostname", "Fingerprint", "Status")
@@ -984,24 +992,16 @@ class NetcutApp(App):
                 id="domain-btn-row"
             ))
             pane.mount(Static("", id="domain-status"))
-            pane.mount(Static("[bold]Global DNS Block[/]"))
-            pane.mount(Horizontal(Button("Toggle Global DNS Block", id="global-dns-btn", variant="warning"), id="global-dns-row"))
+            pane.mount(Static("[bold]Global DNS / Stealth / HTTPS / Harvester[/]"))
+            pane.mount(Horizontal(
+                Button("Toggle Global DNS", id="global-dns-btn", variant="warning"),
+                Button("Stealth", id="stealth-btn", variant="default"),
+                Button("HTTPS Intercept", id="https-btn", variant="error"),
+                Button("Harvester", id="harvest-btn", variant="error"),
+                Button("View Creds", id="view-creds-btn", variant="default"),
+                id="toggles-row"
+            ))
             pane.mount(Static("", id="global-dns-status"))
-            pane.mount(Static("[bold]Stealth[/]"))
-            pane.mount(Horizontal(Button("Toggle Stealth Mode", id="stealth-btn", variant="default"), id="stealth-row"))
-            pane.mount(Static("", id="stealth-status"))
-            pane.mount(Static("[bold]HTTPS Interception[/]"))
-            pane.mount(Horizontal(
-                Button("Toggle HTTPS Intercept", id="https-btn", variant="error"),
-                id="https-row"
-            ))
-            pane.mount(Static("", id="https-status"))
-            pane.mount(Static("[bold]Credential Harvester[/]"))
-            pane.mount(Horizontal(
-                Button("Toggle Harvester", id="harvest-btn", variant="error"),
-                Button("View Captured", id="view-creds-btn", variant="default"),
-                id="harvest-row"
-            ))
             pane.mount(Static("", id="harvest-status"))
         except Exception as e:
             self.notify(f"Build: {e}", severity="error", timeout=10)
@@ -1016,14 +1016,13 @@ class NetcutApp(App):
             self.query_one("#lag-btn", Button).variant = "warning" if quick_tc_qdisc else "primary"
             status = f"[dim]Blocked: {', '.join(custom_blocks.keys())}[/]" if custom_blocks else ""
             self.query_one("#domain-status", Static).update(status)
-            gs = "[green]ACTIVE[/]" if global_dns_block else "[dim]OFF[/]"
-            self.query_one("#global-dns-status", Static).update(f"Global DNS Block: {gs}")
-            ss = "[green]ON[/] (random ARP timing)" if stealth_mode else "[dim]OFF[/]"
-            self.query_one("#stealth-status", Static).update(f"Stealth: {ss}")
-            hs = "[green]ACTIVE[/]" if https_intercept_on else "[dim]OFF[/]"
-            self.query_one("#https-status", Static).update(f"HTTPS Intercept: {hs}")
+            gs = "[green]ON[/]" if global_dns_block else "[dim]OFF[/]"
+            ss = " [green]Stealth[/]" if stealth_mode else ""
+            hs = " [green]HTTPS[/]" if https_intercept_on else ""
+            hvs = " [green]Harvester[/]" if harvester_on else ""
+            cred_count = f" ({len(harvested_creds)})" if harvested_creds else ""
+            self.query_one("#global-dns-status", Static).update(f"DNS:{gs}{ss}{hs}{hvs}{cred_count}")
             hvs = "[green]ACTIVE[/]" if harvester_on else "[dim]OFF[/]"
-            cred_count = f" ({len(harvested_creds)} captured)" if harvested_creds else ""
             self.query_one("#harvest-status", Static).update(f"Harvester: {hvs}{cred_count}")
         except: pass
     
