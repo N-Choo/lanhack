@@ -1,0 +1,4 @@
+scapy>=2.5.0
+textual>=1.0.0
+prompt-toolkit>=3.0.0
+
