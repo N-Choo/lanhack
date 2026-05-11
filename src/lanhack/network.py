@@ -5,42 +5,66 @@ import scapy.all as scapy
 
 from lanhack import config
 
-FINGERPRINT_PORTS = [22, 80, 443, 135, 139, 445, 554, 3689, 62078, 7000, 7676, 8080, 8443, 8883, 9090]
-FINGERPRINT_MAP = {
-    frozenset([135, 139, 445]): "Windows",
-    frozenset([22]): "Linux/SSH",
-    frozenset([3689, 62078]): "macOS/iOS",
-    frozenset([3689]): "macOS/iTunes",
-    frozenset([80, 443]): "Web Server",
-    frozenset([7000, 7676]): "Samsung TV",
-    frozenset([8883]): "IoT/MQTT",
-    frozenset([554]): "IP Camera",
-    frozenset([9090]): "Smart TV/Chromecast",
+DEVICE_TYPES = {
+    "Apple": "macOS/iOS", "Samsung": "Samsung", "LG": "LG TV",
+    "Google": "Google", "Amazon": "Amazon", "Roku": "Roku",
+    "Xiaomi": "Xiaomi", "Huawei": "Huawei", "TP-Link": "Router",
+    "Netgear": "Router", "Cisco": "Network", "Asus": "Asus",
+    "Intel": "Computer", "Realtek": "Computer", "VMware": "Virtual",
+    "Raspberry Pi": "Pi/Linux", "Espressif": "IoT", "Tuya": "IoT",
+    "Sonos": "Speaker",     "Dell": "Windows PC", "HP": "HP Device", "HP Inc.": "HP Device",
+    "Microsoft": "Windows", "Nintendo": "Nintendo", "Sony": "Sony",
+    "Lenovo": "Windows PC", "Acer": "Windows PC",
+    "Ubiquiti": "Network", "Hikvision": "Camera", "MikroTik": "Router",
+    "Wyze": "IoT", "Arris": "Router", "D-Link": "Router",
+    "ZTE": "Router", "Canon": "Printer", "Panasonic": "TV",
+    "Toshiba": "TV", "Xerox": "Printer",
 }
 
 def vendor(mac):
-    return config.OUI_DB.get(mac[:8].lower(), "Unknown")
-
-def fingerprint_device(ip, timeout=2):
-    open_ports = set()
-    host_alive = False
-    pkts = [scapy.IP(dst=ip)/scapy.TCP(dport=port, flags="S") for port in FINGERPRINT_PORTS]
+    prefix = mac[:8].lower()
+    val = config.OUI_DB.get(prefix)
+    if val:
+        return val
     try:
-        ans, unans = scapy.sr(pkts, timeout=timeout, verbose=False)
-        for sent, recv in ans:
-            if recv.haslayer(scapy.TCP):
-                host_alive = True
-                if recv[scapy.TCP].flags & 0x12:
-                    open_ports.add(recv[scapy.TCP].sport)
+        import urllib.request as _ur
+        url = f"https://api.macvendors.com/{prefix.replace(':', '')}"
+        req = _ur.Request(url, headers={"User-Agent": "lanhack/1.0"})
+        resp = _ur.urlopen(req, timeout=2)
+        name = resp.read().decode().strip()
+        if name:
+            config.OUI_DB[prefix] = name
+            return name
     except: pass
-    guess = "Unknown"
-    for port_set, label in FINGERPRINT_MAP.items():
-        if port_set.issubset(open_ports):
-            guess = label
+    return "Unknown"
+
+APPLE_VENDORS = {"Apple"}
+WINDOWS_VENDORS = {"Microsoft", "Dell", "Lenovo", "Acer"}
+
+def fingerprint_device(ip, timeout=1):
+    dev_vendor = ""
+    dev_mac = ""
+    for d in config.devices:
+        if d["ip"] == ip:
+            dev_vendor = d.get("vendor", "")
+            dev_mac = d.get("mac", "")
             break
-    if not open_ports and host_alive:
-        guess = "Active (firewalled)"
-    return guess, sorted(open_ports)
+    if not dev_mac:
+        return "Unknown", []
+    mac_prefix = dev_mac[:8].lower()
+    oui_lookup = config.OUI_DB.get(mac_prefix, "")
+    if not dev_vendor or dev_vendor == "Unknown":
+        dev_vendor = oui_lookup
+    for v in APPLE_VENDORS:
+        if v.lower() in dev_vendor.lower() or v.lower() in oui_lookup.lower():
+            return "macOS/iOS", []
+    for v in WINDOWS_VENDORS:
+        if v.lower() in dev_vendor.lower():
+            return "Windows", []
+    guess = DEVICE_TYPES.get(dev_vendor, "Unknown")
+    if guess == "Unknown" and oui_lookup:
+        guess = DEVICE_TYPES.get(oui_lookup, "Unknown")
+    return guess, []
 
 def wake_on_lan(mac):
     try:
@@ -82,12 +106,32 @@ def detect_network():
         config.netmask = ""
     return config.iface, config.my_ip, config.gateway_ip, config.netmask
 
+def _resolve_hostname(ip):
+    try:
+        import subprocess as _sp
+        socket.setdefaulttimeout(2)
+        name = socket.gethostbyaddr(ip)[0].split('.')[0]
+        if name and not name.startswith("?"):
+            return name
+    except: pass
+    try:
+        res = _sp.run(["nmblookup", "-A", ip], capture_output=True, text=True, timeout=2)
+        for line in res.stdout.split("\n"):
+            if "<00>" in line and "UNIQUE" in line:
+                return line.split()[0]
+    except: pass
+    try:
+        res = _sp.run(["host", ip], capture_output=True, text=True, timeout=2)
+        m = __import__('re').search(r'domain name pointer (.+)\.', res.stdout)
+        if m: return m.group(1).split('.')[0]
+    except: pass
+    return ""
+
 def arp_scan(subnet=None):
     ans, _ = scapy.arping(subnet or config.netmask, timeout=3, verbose=False)
     found = []
     for _, recv in ans:
-        try: hn = socket.gethostbyaddr(recv.psrc)[0].split('.')[0]
-        except: hn = ""
+        hn = _resolve_hostname(recv.psrc)
         found.append({"ip":recv.psrc,"mac":recv.hwsrc,"vendor":vendor(recv.hwsrc),"hostname":hn,"fingerprint":"","open_ports":""})
     return [d for d in found if d["ip"] != config.my_ip]
 

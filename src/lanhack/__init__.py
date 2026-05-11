@@ -22,7 +22,7 @@ if os.geteuid() != 0:
     sys.exit(1)
 
 from lanhack.config import *
-from lanhack.network import vendor, fingerprint_device, wake_on_lan, detect_network, arp_scan, arp_spoof_loop, device_label, main_site, FINGERPRINT_PORTS, FINGERPRINT_MAP
+from lanhack.network import vendor, fingerprint_device, wake_on_lan, detect_network, arp_scan, arp_spoof_loop, device_label, main_site, DEVICE_TYPES
 from lanhack.monitor import sniff_sites
 from lanhack.dns import _dns_server_run
 from lanhack.harvester import harvester_proxy, _ensure_mitm_addon, _init_cred_file, HARVEST_JS

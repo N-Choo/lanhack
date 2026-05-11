@@ -94,8 +94,8 @@ class NetcutApp(App):
             self.notify(f"No interface detected!", severity="error", timeout=10)
         else:
             scapy.conf.iface = C.iface
-            self.sniff_thread = threading.Thread(target=sniff_sites, daemon=True)
-            self.sniff_thread.start()
+            C.sniff_thread = threading.Thread(target=sniff_sites, daemon=True)
+            C.sniff_thread.start()
             self.notify(f"Sniffing on {C.iface} ({C.my_ip})", timeout=3)
 
     def update_stats(self):
@@ -103,7 +103,8 @@ class NetcutApp(App):
             hdr = self.query_one("#header", Static)
             hdr.update(f"  LANHACK  |  {C.iface}  |  {C.my_ip}  |  GW: {C.gateway_ip}  |  {C.netmask}")
         except: pass
-        s = f" Devices: {len(C.devices)}  |  Blocked: {len(C.blocked_ips)}  |  Spies: {len(C.spy_threads)}  |  Captures: {sum(len(v) for v in C.captured_sites.values())}  |  Discord: {'ON' if C.quick_discord else 'OFF'}  |  Steam: {'ON' if C.quick_steam else 'OFF'}  |  Lag: {'ON' if C.quick_latency_ip else 'OFF'}"
+        status = f" {C.status_message}  |" if C.status_message else ""
+        s = f"{status} Devices: {len(C.devices)}  |  Blocked: {len(C.blocked_ips)}  |  Spies: {len(C.spy_threads)}  |  Captures: {sum(len(v) for v in C.captured_sites.values())}  |  Discord: {'ON' if C.quick_discord else 'OFF'}  |  Steam: {'ON' if C.quick_steam else 'OFF'}  |  Lag: {'ON' if C.quick_latency_ip else 'OFF'}"
         self.query_one("#stats").update(s)
         try:
             spy_text = f"\n[bold]Active spies:[/] {', '.join(C.spy_threads.keys())}" if C.spy_threads else ""
@@ -232,14 +233,11 @@ class NetcutApp(App):
             if not C.devices:
                 self.notify("Scan LAN first", severity="warning", timeout=2)
             else:
-                self.notify("Fingerprinting devices...", timeout=2)
-                for d in C.devices:
-                    guess, ports = fingerprint_device(d["ip"])
-                    d["fingerprint"] = guess
-                    d["open_ports"] = ",".join(str(p) for p in ports)
-                self.refresh_devices()
-                self.update_stats()
-                self.notify("Fingerprinting complete", timeout=3)
+                C.status_message = f"Fingerprinting {len(C.devices)} devices..."
+                self.notify(C.status_message, timeout=10)
+                t = threading.Thread(target=self._do_fingerprint, daemon=True)
+                t.start()
+
         elif btn_id == "wol-btn":
             ip = self.query_one("#target-ip-dev", Input).value.strip()
             mac = next((d["mac"] for d in C.devices if d["ip"] == ip), None)
@@ -399,34 +397,68 @@ class NetcutApp(App):
             except: pass
 
     def scan_lan(self):
+        inp = self.query_one("#subnet-input", Input).value.strip()
+        subnet = inp if inp else C.netmask
+        if not subnet:
+            self.notify("Enter a subnet (e.g. 192.168.68.0/24)", severity="warning", timeout=3)
+            return
+        if inp: C.netmask = subnet
+        C.status_message = f"Scanning {subnet}..."
+        self.notify(C.status_message, timeout=10)
+        t = threading.Thread(target=self._do_scan, args=(subnet,), daemon=True)
+        t.start()
+
+    def _do_scan(self, subnet):
         try:
-            inp = self.query_one("#subnet-input", Input).value.strip()
-            subnet = inp if inp else C.netmask
-            if not subnet:
-                self.notify("Enter a subnet (e.g. 192.168.68.0/24)", severity="warning", timeout=3)
-                return
-            if inp: C.netmask = subnet
             found = arp_scan(subnet)
-            C.devices = found
-            self.refresh_devices()
-            self.update_stats()
-            self.notify(f"Found {len(C.devices)} devices", severity="information", timeout=3)
+            self.call_from_thread(self._scan_done, found)
         except Exception as e:
-            self.notify(f"Scan failed: {e}", severity="error", timeout=3)
+            self.call_from_thread(self._scan_error, str(e))
+
+    def _scan_error(self, msg):
+        C.status_message = ""
+        self.notify(f"Scan failed: {msg}", severity="error", timeout=3)
+        self.update_stats()
+
+    def _scan_done(self, found):
+        C.devices = found
+        C.status_message = ""
+        self.refresh_devices()
+        self.update_stats()
+        self.notify(f"Found {len(C.devices)} devices", severity="information", timeout=3)
+
+    def _do_fingerprint(self):
+        for d in C.devices:
+            guess, ports = fingerprint_device(d["ip"])
+            d["fingerprint"] = guess
+            d["open_ports"] = ",".join(str(p) for p in ports)
+        self.call_from_thread(self._fp_done)
+
+    def _fp_done(self):
+        C.status_message = ""
+        self.refresh_devices()
+        self.update_stats()
+        self.notify("Fingerprinting complete", timeout=3)
 
     def do_auto_scan(self):
-        try:
-            found = arp_scan(C.netmask)
-            existing = {d["ip"] for d in C.devices}
-            new_ones = [d for d in found if d["ip"] not in existing]
-            if new_ones:
-                C.devices.extend(new_ones)
-                C.devices.sort(key=lambda x: [int(o) for o in x["ip"].split(".")])
-                self.refresh_devices()
-                self.update_stats()
-                names = ", ".join(d["ip"] for d in new_ones)
-                self.notify(f"New devices: {names}", timeout=5)
-        except: pass
+        def _scan():
+            try:
+                found = arp_scan(C.netmask)
+                existing = {d["ip"] for d in C.devices}
+                new_ones = [d for d in found if d["ip"] not in existing]
+                if new_ones:
+                    C.devices.extend(new_ones)
+                    C.devices.sort(key=lambda x: [int(o) for o in x["ip"].split(".")])
+                    self.call_from_thread(self._auto_scan_done, new_ones)
+            except: pass
+        t = threading.Thread(target=_scan, daemon=True)
+        t.start()
+
+    def _auto_scan_done(self, new_ones):
+        self.refresh_devices()
+        self.update_stats()
+        names = ", ".join(d["ip"] for d in new_ones)
+        self.notify(f"New devices: {names}", timeout=5)
 
     def toggle_block(self, ip):
         if ip == C.gateway_ip or ip == C.my_ip:
@@ -503,9 +535,9 @@ class NetcutApp(App):
     def block_domain(self, domain):
         try:
             ips = set()
-            for cmd_template in [["host"], ["dig", "+short"], ["nslookup"]]:
+            for cmd in ["host", "dig +short", "nslookup"]:
                 try:
-                    out = subprocess.check_output(cmd_template + [domain], text=True, timeout=5)
+                    out = subprocess.check_output(f"{cmd} {domain}", shell=True, text=True, timeout=5)
                     for ip in re.findall(r'(?:\d{1,3}\.){3}\d{1,3}', out):
                         if ip.startswith("127."): continue
                         ips.add(ip)
@@ -515,18 +547,17 @@ class NetcutApp(App):
                 self.notify(f"Could not resolve {domain}", severity="error", timeout=5)
                 return
             C.iptables.policy("FORWARD", "ACCEPT")
-            rules = []
-            for ip in sorted(ips):
+            ip_list = sorted(ips)
+            for ip in ip_list:
                 C.iptables.insert("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.insert("OUTPUT", ["-d", ip, "-j", "DROP"])
-                rules.append(ip)
-            C.custom_blocks[domain] = rules
-            self.notify(f"Blocked {domain}: {', '.join(sorted(ips))}", severity="warning", timeout=5)
+            C.custom_blocks[domain] = ip_list
+            self.notify(f"Blocked {domain}: {', '.join(ip_list)}", severity="warning", timeout=5)
         except Exception as e:
             self.notify(f"Error: {e}", severity="error", timeout=5)
         self.update_stats()
         self.build_attacks_tab()
-
+    
     def unblock_domain(self, domain):
         if domain in C.custom_blocks:
             for ip in C.custom_blocks[domain]:
@@ -708,7 +739,13 @@ class NetcutApp(App):
             self.query_one("#steam-btn", Button).variant = "error" if C.quick_steam else "primary"
             self.query_one("#lag-btn", Button).label = "Remove Lag" if C.quick_tc_qdisc else "Add Lag"
             self.query_one("#lag-btn", Button).variant = "warning" if C.quick_tc_qdisc else "primary"
-            status = f"[dim]Blocked: {', '.join(C.custom_blocks.keys())}[/]" if C.custom_blocks else ""
+            if C.custom_blocks:
+                parts = []
+                for domain, ips in C.custom_blocks.items():
+                    parts.append(f"{domain} -> {', '.join(ips[:3])}{'...' if len(ips) > 3 else ''}")
+                status = f"[dim]{'  |  '.join(parts)}[/]"
+            else:
+                status = ""
             self.query_one("#domain-status", Static).update(status)
             gs = "[green]ON[/]" if C.global_dns_block else "[dim]OFF[/]"
             ss = " [green]Stealth[/]" if C.stealth_mode else ""
@@ -789,15 +826,18 @@ class NetcutApp(App):
         elif not C.spy_threads:
             log.write("[yellow]No targets being spied on.[/]")
             log.write("[dim]Click [bold]All[/] in Devices tab to spy on every device at once.[/]")
-            log.write(f"[dim]Interface: {C.iface} | IP: {C.my_ip} | Sniffer: {'running' if C.sniff_thread and C.sniff_thread.is_alive() else 'STOPPED'}[/]")
+            err = f" ({C.sniff_error})" if C.sniff_error else ""
+            log.write(f"[dim]Interface: {C.iface} | IP: {C.my_ip} | Sniffer: {'running' if C.sniff_thread and C.sniff_thread.is_alive() else 'STOPPED'}{err}[/]")
         else:
             sniffer_alive = C.sniff_thread and C.sniff_thread.is_alive()
             if sniffer_alive:
                 log.write("[yellow]Sniffing active but no traffic yet...[/]")
             else:
-                log.write("[red]Sniffer is STOPPED! Check interface or permissions.[/]")
+                err = f" ({C.sniff_error})" if C.sniff_error else ""
+                log.write(f"[red]Sniffer is STOPPED!{err}[/]")
             log.write(f"[dim]Spying on: {', '.join(C.spy_threads.keys())}[/]")
-            log.write(f"[dim]Interface: {C.iface} | IP: {C.my_ip} | Captured: {total_cap} | Sniffer: {'running' if sniffer_alive else 'STOPPED'}[/]")
+            err = f" ({C.sniff_error})" if C.sniff_error else ""
+            log.write(f"[dim]Interface: {C.iface} | IP: {C.my_ip} | Captured: {total_cap} | Sniffer: {'running' if sniffer_alive else 'STOPPED'}{err}[/]")
             log.write("[dim]Try browsing a site on the target device.[/]")
         self.update_stats()
 
@@ -823,6 +863,10 @@ class NetcutApp(App):
         pane.mount(dt)
         pane.mount(Horizontal(Button("Export CSV+JSON", id="export-btn", variant="primary"), id="export-row"))
 
+    def on_tabbed_content_tab_activated(self, event):
+        if event.pane and event.pane.id == "sites":
+            self.build_sites_tab()
+    
     def action_quit(self):
         C.quit_flag = True
         for ip in list(C.spoof_threads.keys()):
@@ -835,8 +879,8 @@ class NetcutApp(App):
             t.join(timeout=2)
         subprocess.run(["tc", "qdisc", "del", "dev", C.iface, "root"], stderr=subprocess.DEVNULL)
         subprocess.run(["sh", "-c", "echo 0 > /proc/sys/net/ipv4/ip_forward"], stdout=subprocess.DEVNULL)
-        for domain in list(C.custom_blocks.keys()):
-            for ip in C.custom_blocks[domain]:
+        for domain, ips in list(C.custom_blocks.items()):
+            for ip in ips:
                 C.iptables.delete("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.delete("OUTPUT", ["-d", ip, "-j", "DROP"])
         C.iptables.restore()

@@ -1,5 +1,5 @@
 import unittest.mock, socket, struct
-from lanhack.network import detect_network, fingerprint_device, FINGERPRINT_PORTS
+from lanhack.network import detect_network, fingerprint_device, DEVICE_TYPES
 
 @unittest.mock.patch("subprocess.check_output")
 def test_detect_network_ip_route(mock_subprocess):
@@ -19,13 +19,21 @@ def test_detect_network_different_ip(mock_subprocess):
     assert gw == "10.0.0.1"
     assert netmask == "10.0.0.0/24"
 
-def test_fingerprint_ports_structure():
-    assert len(FINGERPRINT_PORTS) >= 10
-    assert 22 in FINGERPRINT_PORTS
-    assert 80 in FINGERPRINT_PORTS
-    assert 443 in FINGERPRINT_PORTS
+def test_fingerprint_device_types():
+    assert "Apple" in DEVICE_TYPES
+    assert DEVICE_TYPES["Apple"] == "macOS/iOS"
+    assert DEVICE_TYPES["Samsung"] == "Samsung"
+    assert DEVICE_TYPES["Microsoft"] == "Windows"
 
-def test_fingerprint_device_timeout():
-    guess, ports = fingerprint_device("192.168.1.250", timeout=0.1)
-    assert isinstance(guess, str)
-    assert isinstance(ports, list)
+def test_fingerprint_device_unknown():
+    import lanhack.config as c
+    c.devices = [{"ip":"192.168.1.50","mac":"","vendor":"Unknown","hostname":"","fingerprint":"","open_ports":""}]
+    guess, ports = fingerprint_device("192.168.1.50")
+    assert guess == "Unknown"
+    assert ports == []
+
+def test_fingerprint_device_apple():
+    import lanhack.config as c
+    c.devices = [{"ip":"192.168.1.50","mac":"00:1b:63:aa:bb:cc","vendor":"Apple","hostname":"","fingerprint":"","open_ports":""}]
+    guess, ports = fingerprint_device("192.168.1.50")
+    assert guess == "macOS/iOS"

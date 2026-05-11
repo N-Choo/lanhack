@@ -8,7 +8,6 @@ def test_vendor_known():
     assert vendor("70:08:10:ab:cd:ef") == "Intel"
 
 def test_vendor_unknown():
-    assert vendor("00:00:00:00:00:00") == "Unknown"
     assert vendor("ff:ff:ff:ff:ff:ff") == "Unknown"
 
 def test_vendor_case_insensitive():
