@@ -79,7 +79,7 @@ class NetcutApp(App):
         self.build_device_tab()
         self.build_monitor_tab()
         self.build_sites_tab()
-        self.call_after_refresh(self._build_attacks_all)
+        self._build_attacks_all()
         self.update_stats()
         self.set_interval(2, self.refresh_monitor)
         if not C.iface or C.iface == "unknown":
@@ -104,7 +104,7 @@ class NetcutApp(App):
             hdr.update(f"  LANHACK  |  {C.iface}  |  {C.my_ip}  |  GW: {C.gateway_ip}  |  {C.netmask}")
         except: pass
         status = f" {C.status_message}  |" if C.status_message else ""
-        s = f"{status} Devices: {len(C.devices)}  |  Blocked: {len(C.blocked_ips)}  |  Spies: {len(C.spy_threads)}  |  Captures: {sum(len(v) for v in C.captured_sites.values())}  |  Discord: {'ON' if C.quick_discord else 'OFF'}  |  Steam: {'ON' if C.quick_steam else 'OFF'}  |  Lag: {'ON' if C.quick_latency_ip else 'OFF'}"
+        s = f"{status} Devices: {len(C.devices)}  |  Blocked: {len(C.blocked_ips)}  |  Spies: {len(C.spy_threads)}  |  DNS Spoofs: {C.dns_spoof_count}  |  Captures: {sum(len(v) for v in C.captured_sites.values())}  |  Discord: {'ON' if C.quick_discord else 'OFF'}  |  Steam: {'ON' if C.quick_steam else 'OFF'}  |  Lag: {'ON' if C.quick_latency_ip else 'OFF'}"
         self.query_one("#stats").update(s)
         try:
             spy_text = f"\n[bold]Active spies:[/] {', '.join(C.spy_threads.keys())}" if C.spy_threads else ""
@@ -194,6 +194,7 @@ class NetcutApp(App):
             if not C.devices:
                 self.notify("Scan LAN first", severity="warning", timeout=2)
             else:
+                C.log(f"Spy All: starting on {len(C.devices)} devices")
                 subprocess.run(["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"], stdout=subprocess.DEVNULL)
                 C.iptables.policy("FORWARD", "ACCEPT")
                 count = 0
@@ -205,6 +206,7 @@ class NetcutApp(App):
                     t = threading.Thread(target=arp_spoof_loop,args=(ip,mac,C.gateway_ip,ev,False),daemon=True)
                     t.start(); C.spy_threads[ip] = (t, ev)
                     count += 1
+                C.log(f"Spy All: spoofing {count} devices via gateway {C.gateway_ip}")
                 self.notify(f"Spying on all {count} devices", timeout=3)
                 self.update_stats()
         elif btn_id == "list-view-btn":
@@ -544,6 +546,7 @@ class NetcutApp(App):
                     if ips: break
                 except: continue
             if not ips:
+                C.log(f"Block domain: could not resolve {domain}")
                 self.notify(f"Could not resolve {domain}", severity="error", timeout=5)
                 return
             C.iptables.policy("FORWARD", "ACCEPT")
@@ -552,6 +555,7 @@ class NetcutApp(App):
                 C.iptables.insert("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.insert("OUTPUT", ["-d", ip, "-j", "DROP"])
             C.custom_blocks[domain] = ip_list
+            C.log(f"Block domain: {domain} -> {', '.join(ip_list)}")
             self.notify(f"Blocked {domain}: {', '.join(ip_list)}", severity="warning", timeout=5)
         except Exception as e:
             self.notify(f"Error: {e}", severity="error", timeout=5)
@@ -586,6 +590,7 @@ class NetcutApp(App):
 
     def toggle_global_dns(self):
         if C.global_dns_block:
+            C.log("Global DNS: disabling")
             C.global_dns_block = False
             C.dns_stop = True
             if C.dns_server_thread:
@@ -595,15 +600,24 @@ class NetcutApp(App):
             C.iptables.delete("PREROUTING", ["-p", "udp", "--dport", "53", "-j", "REDIRECT", "--to-port", "53"], table="nat")
             C.iptables.delete("INPUT", ["-p", "udp", "--dport", "53", "-j", "ACCEPT"])
             self.notify("Global DNS block disabled", timeout=2)
+            C.log("Global DNS: disabled")
         else:
             try:
+                C.log("Global DNS: enabling")
                 C.dns_server_thread = threading.Thread(target=_dns_server_run, daemon=True)
                 C.dns_server_thread.start()
+                time.sleep(0.5)
+                if not C.dns_server_thread.is_alive():
+                    C.log("Global DNS: server thread died immediately")
+                    self.notify("DNS server failed to start (port 53 in use?)", severity="error", timeout=5)
+                    return
                 C.iptables.insert("INPUT", ["-p", "udp", "--dport", "53", "-j", "ACCEPT"])
                 C.iptables.insert("PREROUTING", ["-p", "udp", "--dport", "53", "-j", "REDIRECT", "--to-port", "53"], table="nat")
                 C.global_dns_block = True
+                C.log("Global DNS: enabled, rules added")
                 self.notify("Global DNS block ON — all devices blocked", severity="warning", timeout=5)
             except Exception as e:
+                C.log(f"Global DNS failed: {e}")
                 self.notify(f"Global DNS failed: {e}", severity="error", timeout=5)
         self.update_stats()
         self.build_attacks_tab()
@@ -687,6 +701,7 @@ class NetcutApp(App):
     def _build_attacks_all(self):
         if C._attacks_built: return
         C._attacks_built = True
+        C.log("Building attacks tab")
         try:
             pane = self.query_one("#attacks")
             try:

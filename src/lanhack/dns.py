@@ -13,10 +13,16 @@ def _match_blocked(qname, blocklist):
 
 def _dns_server_run():
     DNS_UPSTREAM = ("1.1.1.1", 53)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", 53))
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", 53))
+        config.log("DNS server: bound to port 53")
+    except OSError as e:
+        config.log(f"DNS server: BIND FAILED - {e}")
+        return
     sock.settimeout(1)
+    config.log("DNS server: listening")
     while not config.quit_flag and not config.dns_stop:
         try:
             data, addr = sock.recvfrom(512)
@@ -28,8 +34,10 @@ def _dns_server_run():
                 qname_parts.append(data[i+1:i+1+length].decode(errors='ignore'))
                 i += 1 + length
             qname = ".".join(qname_parts).lower()
+            config.log(f"DNS query from {addr[0]}: {qname}")
             blocked = _match_blocked(qname, config.dns_blocklist) or _match_blocked(qname, list(config.custom_blocks.keys()))
             if blocked:
+                config.log(f"DNS BLOCKED: {qname} from {addr[0]}")
                 tid = struct.pack(">H", (data[0] << 8) | data[1])
                 flags = struct.pack(">H", 0x8183)
                 qdcount = struct.pack(">H", 1)
@@ -39,6 +47,7 @@ def _dns_server_run():
                 rdata = struct.pack(">I", 0x7f000001)
                 resp = tid + flags + qdcount + ancount + nscount + arcount + data[12:i+1] + struct.pack(">H",1)+struct.pack(">H",1)+struct.pack(">I",60)+struct.pack(">H",4)+rdata
                 sock.sendto(resp, addr)
+                config.log(f"DNS sent 127.0.0.1 for {qname}")
             else:
                 fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 fwd.settimeout(3)

