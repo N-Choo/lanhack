@@ -1,9 +1,8 @@
 import unittest.mock, socket, struct
-from lanhack import detect_network, fingerprint_device, FINGERPRINT_PORTS
+from lanhack.network import detect_network, fingerprint_device, FINGERPRINT_PORTS
 
 @unittest.mock.patch("subprocess.check_output")
-@unittest.mock.patch("sys.exit")
-def test_detect_network_ip_route(mock_exit, mock_subprocess):
+def test_detect_network_ip_route(mock_subprocess):
     mock_subprocess.return_value = "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.100 uid 1000"
     iface, ip, gw, netmask = detect_network()
     assert iface == "eth0"
@@ -12,8 +11,7 @@ def test_detect_network_ip_route(mock_exit, mock_subprocess):
     assert netmask == "192.168.1.0/24"
 
 @unittest.mock.patch("subprocess.check_output")
-@unittest.mock.patch("sys.exit")
-def test_detect_network_different_ip(mock_exit, mock_subprocess):
+def test_detect_network_different_ip(mock_subprocess):
     mock_subprocess.return_value = "1.1.1.1 via 10.0.0.1 dev wlan0 src 10.0.0.50 uid 1000"
     iface, ip, gw, netmask = detect_network()
     assert iface == "wlan0"

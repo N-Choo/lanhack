@@ -1,5 +1,6 @@
 import json, csv, io, os
 from lanhack import device_label, main_site
+from lanhack import config as C
 
 SAMPLE_CAPTURES = {
     "192.168.1.50": [
@@ -17,14 +18,13 @@ SAMPLE_CREDS = [
 ]
 
 def test_csv_format():
-    import lanhack
-    lanhack.captured_sites.clear()
+    C.captured_sites.clear()
     for ip, entries in SAMPLE_CAPTURES.items():
-        lanhack.captured_sites[ip] = entries
+        C.captured_sites[ip] = entries
     output = io.StringIO()
     rows = []
-    for ip in lanhack.captured_sites:
-        for ts, site, stype, src, dst in lanhack.captured_sites[ip]:
+    for ip in C.captured_sites:
+        for ts, site, stype, src, dst in C.captured_sites[ip]:
             rows.append({"Time":ts,"Device":device_label(ip),"IP":ip,"Type":stype,"Site":site})
     w = csv.DictWriter(output, fieldnames=["Time","Device","IP","Type","Site"])
     w.writeheader()
@@ -48,11 +48,10 @@ def test_json_format():
     assert 'secret123' in text
 
 def test_empty_export():
-    import lanhack
-    lanhack.captured_sites.clear()
+    C.captured_sites.clear()
     rows = []
-    for ip in lanhack.captured_sites:
-        for ts, site, stype, src, dst in lanhack.captured_sites[ip]:
+    for ip in C.captured_sites:
+        for ts, site, stype, src, dst in C.captured_sites[ip]:
             rows.append({"Time":ts,"Device":device_label(ip),"IP":ip,"Type":stype,"Site":site})
     assert len(rows) == 0
 

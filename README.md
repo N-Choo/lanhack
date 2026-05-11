@@ -14,10 +14,23 @@ A terminal-based LAN manipulation toolkit with a modern TUI. ARP spoof, block de
 ```bash
 git clone https://github.com/N-Choo/lanhack.git
 cd lanhack
+sudo python3 -m lanhack
+```
+
+Or using the legacy entry point:
+
+```bash
 sudo python3 lanhack.py
 ```
 
-Dependencies (`scapy`, `textual`, `mitmproxy`) auto-install on first run.
+For development (editable install):
+
+```bash
+pip install -e .
+sudo python3 -m lanhack
+```
+
+Dependencies (`scapy`, `textual`, `mitmproxy`) auto-install to `--user` on first run.
 
 ---
 
@@ -89,11 +102,13 @@ Dependencies (`scapy`, `textual`, `mitmproxy`) auto-install on first run.
 1. Devices  → skip scanning
 2. Attacks  → Global DNS Block ON
 3. Attacks  → Stealth ON
-4. Monitor  → watch all domains
+4. Monitor  → watch all domains (check Sniffer: running status)
 5. Sites    → export captured data
 ```
 
 No ARP spoof, no SYN scan, no active probes. Pure passive listening.
+
+The monitor tab shows sniffer status (`Sniffer: running` or `Sniffer: STOPPED`) — if stopped, check interface or permissions.
 
 ---
 
@@ -132,7 +147,7 @@ Auto-installs `mitmproxy`, generates a CA certificate, and redirects all HTTP/HT
 
 ### Device Fingerprinting
 
-Sends SYN packets to 15 common ports and matches open port patterns:
+Sends SYN packets in parallel to 15 common ports and matches open port patterns (batch scan, ~2s per device):
 
 | Ports | Likely Device |
 |-------|--------------|
@@ -243,13 +258,39 @@ Zero evidence. The USB boot has no persistence — no logs, no history, no trace
 
 LANHACK uses **ARP spoofing** to redirect a target's traffic through your machine. The `scapy` sniffer captures DNS queries and TLS Server Name Indication (SNI) from forwarded traffic, showing every domain the target visits — even for HTTPS sites.
 
-For blocking, it inserts `iptables` rules at position 1 (before Docker chains) using MAC addresses to survive DHCP IP changes.
+For blocking, it inserts `iptables` rules at position 1 (before Docker chains) using MAC addresses to survive DHCP IP changes. All rules are tracked by `IptablesManager` and automatically cleaned up on exit — no orphaned iptables rules or zombie processes.
 
-The **Global DNS Block** runs a Python DNS server on port 53 that checks queries against a blocklist, returning `127.0.0.1` for blocked domains and forwarding everything else to Cloudflare.
+The **Global DNS Block** runs a Python DNS server on port 53 that checks queries against a domain blocklist using label-boundary matching (no substring over-blocking). Returns `127.0.0.1` for blocked domains and forwards everything else to Cloudflare. The blocklist updates live — domains added while DNS blocking is active are immediately enforced.
 
-**Credential harvesting** uses two methods: a Python proxy that injects JS into HTTP pages, and a mitmproxy addon that scans decrypted POST bodies.
+**Credential harvesting** uses two methods: a Python proxy that injects JS into HTTP pages (captured creds stored with `0o600` permissions), and a mitmproxy addon that scans decrypted POST bodies.
 
 **Stealth mode** randomizes ARP timing. **Latency attacks** use `tc` (traffic control).
+
+## Project Structure
+
+```
+lanhack/
+├── src/lanhack/
+│   ├── __init__.py      Package init, auto-install, re-exports
+│   ├── __main__.py      Entry point (python3 -m lanhack)
+│   ├── config.py        Global state, IptablesManager, constants
+│   ├── network.py       ARP scan/spoof, fingerprint, WoL, vendor lookup
+│   ├── monitor.py       Scapy sniffer, traffic capture
+│   ├── dns.py           DNS sinkhole server with label-based blocking
+│   ├── harvester.py     HTTP credential harvester proxy, mitm addon
+│   └── app.py           Textual TUI (NetcutApp)
+├── tests/               Pytest test suite (26 tests)
+├── pyproject.toml       Package metadata with src/ discovery
+└── lanhack.py           Legacy root entry point (adds src/ to path)
+```
+
+## Security
+
+- **No `os.system()` or `shell=True` anywhere** — all subprocess calls use argument lists, eliminating command injection
+- **All iptables rules tracked** and automatically reverted on quit or crash (`IptablesManager.restore()`)
+- **Thread lifecycle managed**: DNS server, harvester, mitmdump, and ARP spoof threads all properly join/terminate on toggle-off or quit
+- **Credential files** created with `0o600` permissions
+- **DNS blocking** matches on full domain labels (not substrings) to prevent over-blocking
 
 ---
 
@@ -267,6 +308,7 @@ The **Global DNS Block** runs a Python DNS server on port 53 that checks queries
 - LANHACK must stay running to maintain blocks and spies
 - HTTPS Interception requires the target to trust a custom CA
 - Credential harvester only captures HTTP without HTTPS Intercept enabled
+- DNS server uses hardcoded upstream (`1.1.1.1`)
 
 ---
 

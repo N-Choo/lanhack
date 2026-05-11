@@ -1,4 +1,6 @@
-from lanhack import vendor, device_label, main_site, wake_on_lan, OUI_DB, CDN_MAP
+from lanhack.network import vendor, device_label, main_site, wake_on_lan
+from lanhack.config import OUI_DB, CDN_MAP
+from lanhack import config as C
 
 def test_vendor_known():
     assert vendor("b0:a7:b9:00:00:00") == "TP-Link"
@@ -13,20 +15,17 @@ def test_vendor_case_insensitive():
     assert vendor("B0:A7:B9:00:00:00") == "TP-Link"
 
 def test_device_label_known(sample_devices):
-    import lanhack
-    lanhack.devices = sample_devices
+    C.devices = sample_devices
     label = device_label("192.168.1.50")
     assert "iphone" in label
     assert "192.168.1.50" in label
 
 def test_device_label_unknown_ip():
-    import lanhack
-    lanhack.devices = []
+    C.devices = []
     assert device_label("10.0.0.1") == "10.0.0.1"
 
 def test_device_label_known_vendor(sample_devices):
-    import lanhack
-    lanhack.devices = sample_devices
+    C.devices = sample_devices
     label = device_label("192.168.1.60")
     assert "Samsung" in label
     assert "192.168.1.60" in label

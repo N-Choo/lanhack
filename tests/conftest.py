@@ -1,6 +1,5 @@
 import sys, os, unittest.mock, pytest, types
 
-# Create a fake package-like module for textual
 textual_pkg = types.ModuleType("textual")
 textual_pkg.__path__ = ["/fake/textual"]
 textual_pkg.__name__ = "textual"
@@ -138,28 +137,29 @@ sys.modules["scapy"] = scapy_mock
 sys.modules["scapy.all"] = scapy_mock
 sys.modules["scapy.utils"] = scapy_mock.utils
 
-
 sys.modules["mitmproxy"] = unittest.mock.MagicMock()
 sys.modules["mitmproxy.http"] = unittest.mock.MagicMock()
 
-import lanhack
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import lanhack.config as C
 
 @pytest.fixture(autouse=True)
 def reset_globals():
-    lanhack.captured_sites.clear()
-    lanhack.devices.clear()
-    lanhack.blocked_ips.clear()
-    lanhack.spoof_threads.clear()
-    lanhack.spy_threads.clear()
-    lanhack.custom_blocks.clear()
-    lanhack.harvested_creds.clear()
-    lanhack.dns_blocklist.clear()
-    lanhack.bandwidth_data.clear()
-    lanhack.domain_hits.clear()
-    lanhack.my_ip = "192.168.1.100"
-    lanhack.gateway_ip = "192.168.1.1"
-    lanhack.iface = "eth0"
-    lanhack.netmask = "192.168.1.0/24"
+    C.captured_sites.clear()
+    C.devices.clear()
+    C.blocked_ips.clear()
+    C.spoof_threads.clear()
+    C.spy_threads.clear()
+    C.custom_blocks.clear()
+    C.harvested_creds.clear()
+    C.dns_blocklist.clear()
+    C.bandwidth_data.clear()
+    C.domain_hits.clear()
+    C.dns_stop = False
+    C.my_ip = "192.168.1.100"
+    C.gateway_ip = "192.168.1.1"
+    C.iface = "eth0"
+    C.netmask = "192.168.1.0/24"
 
 @pytest.fixture
 def sample_devices():

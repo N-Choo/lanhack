@@ -1,15 +1,9 @@
-#!/usr/bin/env python3
-import sys, os, subprocess
+import os, sys, subprocess
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-try:
-    from lanhack.app import NetcutApp
-    from lanhack import config
-except ImportError as e:
-    print(f"Failed to import lanhack: {e}")
-    sys.exit(1)
+from lanhack import config
+from lanhack.app import NetcutApp
 
-if __name__ == "__main__":
+def main():
     try:
         app = NetcutApp()
         app.run()
@@ -20,3 +14,6 @@ if __name__ == "__main__":
         if config.quick_tc_qdisc:
             subprocess.run(["tc", "qdisc", "del", "dev", config.iface, "root"], stderr=subprocess.DEVNULL)
         print("\n[+] Cleaned up.")
+
+if __name__ == "__main__":
+    main()
