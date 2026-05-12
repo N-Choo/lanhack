@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, json
 import subprocess
 from collections import defaultdict
 from datetime import datetime
@@ -93,6 +93,35 @@ dns_spoof_count = 0
 _attacks_built = False
 
 iptables = IptablesManager()
+
+STATE_FILE = os.path.expanduser("~/.lanhack_state.json")
+
+def save_state():
+    try:
+        data = {
+            "custom_blocks": {k: v for k, v in custom_blocks.items()},
+            "dns_blocklist": list(dns_blocklist),
+            "blocked_ips": list(blocked_ips),
+        }
+        with open(STATE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        log(f"save_state failed: {e}")
+
+def load_state():
+    try:
+        if not os.path.exists(STATE_FILE):
+            return
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+        custom_blocks.clear()
+        custom_blocks.update(data.get("custom_blocks", {}))
+        dns_blocklist.clear()
+        dns_blocklist.update(data.get("dns_blocklist", []))
+        blocked_ips.clear()
+        blocked_ips.update(data.get("blocked_ips", []))
+    except Exception as e:
+        log(f"load_state failed: {e}")
 
 CDN_MAP = {"googlevideo.com":"youtube.com","ytimg.com":"youtube.com","ggpht.com":"youtube.com","phncdn.com":"pornhub.com","rncdn7.com":"pornhub.com","rncdn3.com":"pornhub.com","rncdn1.com":"pornhub.com","gstatic.com":"google.com","googleusercontent.com":"google.com"}
 OUI_DB = {

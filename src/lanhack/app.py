@@ -80,6 +80,7 @@ class NetcutApp(App):
         self.build_monitor_tab()
         self.build_sites_tab()
         self._build_attacks_all()
+        C.load_state()
         self.update_stats()
         self.set_interval(2, self.refresh_monitor)
         if not C.iface or C.iface == "unknown":
@@ -484,6 +485,7 @@ class NetcutApp(App):
         C.spoof_threads[ip] = (t, ev)
         C.iptables.insert("FORWARD", ["-m", "mac", "--mac-source", mac, "-j", "DROP"])
         C.iptables.insert("FORWARD", ["-d", ip, "-j", "DROP"])
+        C.save_state()
         self.notify(f"Blocked {ip} ({mac})", severity="warning", timeout=2)
 
     def unblock_device(self, ip):
@@ -495,6 +497,7 @@ class NetcutApp(App):
         except: pass
         C.iptables.delete("FORWARD", ["-d", ip, "-j", "DROP"])
         if mac: C.iptables.delete("FORWARD", ["-m", "mac", "--mac-source", mac, "-j", "DROP"])
+        C.save_state()
         self.notify(f"Unblocked {ip}", severity="information", timeout=2)
 
     def unblock_all(self):
@@ -555,6 +558,7 @@ class NetcutApp(App):
                 C.iptables.insert("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.insert("OUTPUT", ["-d", ip, "-j", "DROP"])
             C.custom_blocks[domain] = ip_list
+            C.save_state()
             C.log(f"Block domain: {domain} -> {', '.join(ip_list)}")
             self.notify(f"Blocked {domain}: {', '.join(ip_list)}", severity="warning", timeout=5)
         except Exception as e:
@@ -568,6 +572,7 @@ class NetcutApp(App):
                 C.iptables.delete("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.delete("OUTPUT", ["-d", ip, "-j", "DROP"])
             del C.custom_blocks[domain]
+            C.save_state()
             self.notify(f"Unblocked {domain}", timeout=2)
         self.update_stats()
         self.build_attacks_tab()
@@ -669,6 +674,10 @@ class NetcutApp(App):
         self.build_attacks_tab()
 
     def clear_attacks(self):
+        for domain, ips in list(C.custom_blocks.items()):
+            for ip in ips:
+                C.iptables.delete("FORWARD", ["-d", ip, "-j", "DROP"])
+                C.iptables.delete("OUTPUT", ["-d", ip, "-j", "DROP"])
         C.iptables.restore()
         subprocess.run(["tc", "qdisc", "del", "dev", C.iface, "root"], stderr=subprocess.DEVNULL)
         subprocess.run(["sh", "-c", "echo 0 > /proc/sys/net/ipv4/ip_forward"], stdout=subprocess.DEVNULL)
@@ -694,6 +703,7 @@ class NetcutApp(App):
         C.spoof_threads.clear()
         C.blocked_ips.clear()
         C.dns_blocklist.clear()
+        C.save_state()
         self.notify("All attacks cleared", timeout=2)
         self.update_stats()
         self.build_attacks_tab()
@@ -857,8 +867,6 @@ class NetcutApp(App):
         self.update_stats()
 
     def build_sites_tab(self):
-        pane = self.query_one("#sites")
-        pane.remove_children()
         sites = []
         seen = set()
         for ip in sorted(C.captured_sites.keys()):
@@ -866,17 +874,27 @@ class NetcutApp(App):
                 k = f"{site}|{src}|{dst}"
                 if k not in seen: seen.add(k); sites.append((ts, site, device_label(src)))
         sites = sites[-30:]
-        if not sites:
-            pane.mount(Static("No sites captured yet. Go to Monitor tab to see live traffic."))
-            return
-        dt = DataTable(id="site-table")
-        dt.add_columns("Time", "Type", "Device", "Site", "Open")
-        for ts, site, dev in sites:
-            opener = main_site(site)
-            hint = f"-> {opener}" if opener != site else ""
-            dt.add_row(ts, "DNS", dev, site, hint)
-        pane.mount(dt)
-        pane.mount(Horizontal(Button("Export CSV+JSON", id="export-btn", variant="primary"), id="export-row"))
+        try:
+            dt = self.query_one("#site-table", DataTable)
+            dt.clear()
+            for ts, site, dev in sites:
+                opener = main_site(site)
+                hint = f"-> {opener}" if opener != site else ""
+                dt.add_row(ts, "DNS", dev, site, hint)
+        except Exception:
+            pane = self.query_one("#sites")
+            pane.remove_children()
+            if not sites:
+                pane.mount(Static("No sites captured yet. Go to Monitor tab to see live traffic."))
+                return
+            dt = DataTable(id="site-table")
+            dt.add_columns("Time", "Type", "Device", "Site", "Open")
+            for ts, site, dev in sites:
+                opener = main_site(site)
+                hint = f"-> {opener}" if opener != site else ""
+                dt.add_row(ts, "DNS", dev, site, hint)
+            pane.mount(dt)
+            pane.mount(Horizontal(Button("Export CSV+JSON", id="export-btn", variant="primary"), id="export-row"))
 
     def on_tabbed_content_tab_activated(self, event):
         if event.pane and event.pane.id == "sites":
@@ -899,6 +917,7 @@ class NetcutApp(App):
                 C.iptables.delete("FORWARD", ["-d", ip, "-j", "DROP"])
                 C.iptables.delete("OUTPUT", ["-d", ip, "-j", "DROP"])
         C.iptables.restore()
+        C.save_state()
         if C.mitm_process:
             try:
                 C.mitm_process.terminate()

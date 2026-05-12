@@ -48,6 +48,7 @@ def _dns_server_run():
                 resp = tid + flags + qdcount + ancount + nscount + arcount + data[12:i+1] + struct.pack(">H",1)+struct.pack(">H",1)+struct.pack(">I",60)+struct.pack(">H",4)+rdata
                 sock.sendto(resp, addr)
                 config.log(f"DNS sent 127.0.0.1 for {qname}")
+                config.dns_spoof_count += 1
             else:
                 fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 fwd.settimeout(3)
